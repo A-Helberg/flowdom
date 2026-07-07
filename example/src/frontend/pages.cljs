@@ -20,6 +20,8 @@
             [frontend.examples.seqs :as seqs]
             [frontend.examples.fragments :as fragments]
             [frontend.examples.refs :as refs]
+            [frontend.examples.form-uncontrolled :as form-uncontrolled]
+            [frontend.examples.form-controlled :as form-controlled]
             [frontend.examples.portal :as portal]
             [frontend.examples.suspense :as suspense]
             [frontend.examples.error-boundary :as error-boundary]
@@ -30,7 +32,8 @@
             [frontend.examples.missionary-hold :as missionary-hold]
             [frontend.examples.missionary-resource :as missionary-resource]
             [frontend.examples.missionary-spawn :as missionary-spawn]
-            [frontend.examples.missionary-tracked :as missionary-tracked]))
+            [frontend.examples.missionary-tracked :as missionary-tracked]
+            [frontend.examples.rpc-chat :as rpc-chat]))
 
 (def sections
   [{:title "Introduction"
@@ -292,6 +295,29 @@
       [{:source    (rc/inline "frontend/examples/refs.cljs")
         :component refs/example}]}
 
+     {:id    :forms
+      :title "Forms"
+      :prose
+      [:<>
+       [:p "Because SolidJS never re-runs your component, uncontrolled "
+        "inputs aren't the second-class citizen they are in React. Let "
+        "the browser own the input state and read it all at once on "
+        "submit with " [:code "FormData"] " — no atom per field, and "
+        "nothing updates while the user types (watch for the absence "
+        "of flashes)."]
+       [:p "Reach for a controlled input when the UI must react "
+        [:em "while"] " the user types — live validation, previews, "
+        "filtering. Then " [:code ":value"] " comes from an s/atom and "
+        "every keystroke writes it back: exactly the pattern from the "
+        "Atoms in props page."]]
+      :examples
+      [{:title     "Uncontrolled — FormData on submit"
+        :source    (rc/inline "frontend/examples/form_uncontrolled.cljs")
+        :component form-uncontrolled/example}
+       {:title     "Controlled — react per keystroke"
+        :source    (rc/inline "frontend/examples/form_controlled.cljs")
+        :component form-controlled/example}]}
+
      {:id    :portal
       :title "Portal"
       :prose
@@ -477,6 +503,37 @@
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_tracked.cljs")
         :component missionary-tracked/example}]}]}
+
+   {:title "solidrpc"
+    :pages
+    [{:id    :rpc-chat
+      :title "Queries & commands"
+      :prose
+      [:<>
+       [:p "solidrpc streams query results from the server over SSE: "
+        [:code "(rpc/query 'chat/messages)"] " returns a missionary "
+        [:strong "flow"] ". Server-side, the query re-runs when a "
+        "transaction touches the attributes it watches and pushes a "
+        "full value first, diffs after — but none of that is visible "
+        "from here: a flow is a flow, so " [:code "sm/hold"] " bridges "
+        "it into hiccup and everything from the Missionary section "
+        "applies unchanged. The connection opens when a page first "
+        "derefs the hold and closes when the last subscriber leaves. "
+        "Writes go the other way as plain POSTs — "
+        [:code "rpc/command"] " returns a promise."]
+       [:p [:strong "One honest caveat:"] " this site is static — "
+        "there is no server. The " [:code "rpc"] " namespace required "
+        "below is a stand-in with the same signatures: an atom plays "
+        "the database, a sleep plays the network. Swap the require "
+        "for " [:code "solidrpc.call.solidjs"] " and the example "
+        "code is unchanged."]
+       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The fake server (frontend.fake-rpc)"]
+        [ui/code-block (rc/inline "frontend/fake_rpc.cljs")]]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/rpc_chat.cljs")
+        :component rpc-chat/example}]}]}
 
    {:title "Tooling"
     :pages
