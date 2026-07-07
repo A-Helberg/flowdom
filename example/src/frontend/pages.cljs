@@ -521,13 +521,23 @@
         "derefs the hold and closes when the last subscriber leaves. "
         "Writes go the other way as plain POSTs — "
         [:code "rpc/command"] " returns a promise."]
+       [:p "Components never write " [:code "rpc/query"] " at call "
+        "sites, though. The intended shape is a " [:code ".cljc"]
+        " api namespace per domain: the " [:code ":clj"] " branch is "
+        "the real implementation, registered under the same symbol; "
+        "the " [:code ":cljs"] " branch delegates to solidrpc. Both "
+        "sides just call " [:code "(chat/messages)"] " — the rpc "
+        "plumbing lives in one file."]
        [:p [:strong "One honest caveat:"] " this site is static — "
-        "there is no server. The " [:code "rpc"] " namespace required "
-        "below is a stand-in with the same signatures: an atom plays "
-        "the database, a sleep plays the network. Swap the require "
-        "for " [:code "solidrpc.call.solidjs"] " and the example "
-        "code is unchanged."]
+        "there is no server. " [:code "frontend.chat"] "'s cljs "
+        "branch talks to a stand-in with the real query/command "
+        "signatures: an atom plays the database, a sleep plays the "
+        "network."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The api namespace (frontend.chat)"]
+        [ui/code-block (rc/inline "frontend/chat.cljs")]]
+       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The fake server (frontend.fake-rpc)"]
         [ui/code-block (rc/inline "frontend/fake_rpc.cljs")]]]

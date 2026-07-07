@@ -1,13 +1,16 @@
 (ns frontend.examples.rpc-chat
   (:require-macros [solidclj.hiccup-macros :refer [h]])
-  ;; against a real backend this require becomes [solidrpc.call.solidjs :as rpc]
-  (:require [frontend.fake-rpc :as rpc]
+  ;; no rpc in sight: frontend.chat wraps the queries and commands in
+  ;; plain functions, so this component doesn't know it's talking to a
+  ;; server (or, on this static site, to the fake one).
+  (:require [frontend.chat :as chat]
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 
-;; query → flow → hold. Lazy end to end: the "connection" opens when
-;; this page first renders and closes when you navigate away.
-(defonce messages (sm/hold (rpc/query 'chat/messages) :initial []))
+;; (chat/messages) returns a missionary flow; hold bridges it. Lazy end
+;; to end: the "connection" opens when this page first renders and
+;; closes when you navigate away.
+(defonce messages (sm/hold (chat/messages) :initial []))
 
 (defn example []
   (h [:div {:class "space-y-3"}
@@ -21,8 +24,7 @@
       [:form {:class    "flex gap-2"
               :onSubmit (fn [e]
                           (.preventDefault e)
-                          (rpc/command 'chat/send!
-                                       (.get (js/FormData. (.-target e)) "message"))
+                          (chat/send! (.get (js/FormData. (.-target e)) "message"))
                           (.reset (.-target e)))}
        [ui/input {:name "message" :placeholder "say something…"}]
        [ui/button {} "Send"]]]))
