@@ -42,3 +42,11 @@ SSE is server-to-client only. If you need low-latency client-to-server messaging
 **Explicit registry whitelist** — functions must be registered at startup via `solidrpc.registry/register!`. The server looks up only from that map; no dynamic namespace loading, no `requiring-resolve` on user-supplied symbols. An unknown name returns 404 whether it exists in the codebase or not.
 
 **Lazy subscriptions** — the EventSource only opens when a component mounts. Navigating away disposes the signal and closes the connection.
+
+---
+
+## License
+
+Copyright © 2026 Andre Helberg
+
+Distributed under the [Eclipse Public License 2.0](LICENSE).

@@ -48,3 +48,11 @@ example/              Reference app and interactive tutorial
 - **Bun** for JS deps and dev server
 - **Taskfile** — see `Taskfile.yml` at root and per-lib
 - **mise** for tool version pinning (`mise.toml`)
+
+---
+
+## License
+
+Copyright © 2026 Andre Helberg
+
+Distributed under the [Eclipse Public License 2.0](LICENSE).

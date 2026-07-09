@@ -1,12 +1,12 @@
 {:deps {:aliases [:cljs :test]}
- :dev-http {8080 {:root "resources/public"}}
+ :dev-http {1380 {:root "resources/public"}}
  :builds
  {:app {:target     :browser
         :output-dir "resources/public/js"
         :asset-path "/js"
         :modules    {:app {:init-fn frontend.core/init}}
         :devtools   {:watch-dir "resources/public"
-                     :proxy-url "http://localhost:3000"}
+                     :proxy-url "http://localhost:1300"}
         :release    {:asset-path "js"}}
 
   :node-test {:target    :node-test

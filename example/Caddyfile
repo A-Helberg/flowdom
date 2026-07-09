@@ -1,18 +1,18 @@
 {
-	http_port 8080
-	https_port 8443
+	http_port 1080
+	https_port 1443
 	servers {
 		protocols h1 h2 h3
 	}
 }
 
-:8443 {
+:1443 {
 	tls ./certs/localhost.pem ./certs/localhost-key.pem
 
-	header Alt-Svc "h3=\":8443\"; ma=2592000"
+	header Alt-Svc "h3=\":1443\"; ma=2592000"
 
 	handle /* {
-		reverse_proxy http://localhost:3000 {
+		reverse_proxy http://localhost:1300 {
 			transport http {
 				versions 1.1
 			}
@@ -27,6 +27,6 @@
 	# }
 }
 
-:8080 {
-	redir https://localhost:8443{uri}
+:1080 {
+	redir https://localhost:1443{uri}
 }
