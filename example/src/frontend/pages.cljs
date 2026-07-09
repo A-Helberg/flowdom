@@ -34,7 +34,8 @@
             [frontend.examples.missionary-spawn :as missionary-spawn]
             [frontend.examples.missionary-tracked :as missionary-tracked]
             [frontend.examples.rpc-chat :as rpc-chat]
-            [frontend.examples.rpc-rooms :as rpc-rooms]))
+            [frontend.examples.rpc-rooms :as rpc-rooms]
+            [frontend.examples.datomic-txes :as datomic-txes]))
 
 (def sections
   [{:title "Introduction"
@@ -548,4 +549,50 @@
         :component rpc-chat/example}
        {:title     "Reactive arguments — switching rooms"
         :source    (rc/inline "frontend/examples/rpc_rooms.cljs")
-        :component rpc-rooms/example}]}]}])
+        :component rpc-rooms/example}]}
+
+     {:id    :datomic-txes
+      :title "A Datomic tx-listener"
+      :prose
+      [:<>
+       [:p "The previous page waved at the server side — \"the query "
+        "re-runs when a transaction touches the attributes it "
+        "watches\" — this page shows that machinery. Datomic peers "
+        "learn about transactions by pulling from "
+        [:code "d/tx-report-queue"] ", a blocking queue of tx-reports, "
+        "and pulling is exactly missionary's model: the whole listener "
+        "is one " [:code "m/ap"] " — attach the queue, " [:code ".take"]
+        " forever on the blocking executor, detach on cancel. No "
+        "adapter thread, no core.async, no callbacks."]
+       [:p "Two things the code insists on. Datomic keeps " [:em "one"]
+        " report queue per connection and concurrent takers steal from "
+        "each other, so the listener runs once and is shared with "
+        [:code "m/stream"] " — lazy and refcounted, the JVM twin of "
+        [:code "sm/hold"] "'s lifecycle: the queue attaches when the "
+        "first query subscribes and detaches when the last client "
+        "disconnects. And live queries " [:em "dedupe"] ": every "
+        "transaction re-runs them, but only changed answers reach the "
+        "wire."]
+       [:p [:strong "The honest caveat again:"] " no JVM on this "
+        "static site. The demo below runs the same pipeline against a "
+        "browser stand-in — a map plays the database, an atom watch "
+        "plays the queue. The real thing, including the manifold "
+        "bridge that serves it over solidrpc, is in the two server "
+        "files below; run the example app full-stack and "
+        [:code "(server.notes/add-note! \"hi\")"] " from a REPL pushes "
+        "to every connected browser."]
+       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The listener (server.tx-listener)"]
+        [ui/code-block (rc/inline "server/tx_listener.clj")]]
+       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "Wired into solidrpc (server.notes)"]
+        [ui/code-block (rc/inline "server/notes.clj")]]
+       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The browser stand-in (frontend.fake-datomic)"]
+        [ui/code-block (rc/inline "frontend/fake_datomic.cljs")]]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/datomic_txes.cljs")
+        :component datomic-txes/example}]}]}])

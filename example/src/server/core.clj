@@ -7,7 +7,8 @@
    [solidrpc.registry :as registry]
    [solidrpc.server :as solidrpc]
    ;; Require api namespaces so their vars exist before registration.
-   [api.clock]))
+   [api.clock]
+   [server.notes]))
 
 ;; ---------------------------------------------------------------------------
 ;; API function whitelist — only registered vars are reachable via the transport.
@@ -17,6 +18,8 @@
 (registry/register! #'api.clock/slow-time-flow)
 (registry/register! #'api.clock/echo)
 (registry/register! #'api.clock/scoreboard-flow)
+(registry/register! #'server.notes/notes)
+(registry/register! #'server.notes/add-note!)
 
 ;; ---------------------------------------------------------------------------
 ;; Router & server
