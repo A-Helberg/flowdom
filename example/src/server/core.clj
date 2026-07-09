@@ -41,9 +41,9 @@
 (defonce server* (atom nil))
 
 (defn start! []
-  (let [s (http/start-server handler {:port 3000})]
+  (let [s (http/start-server handler {:port 1300})]
     (reset! server* s)
-    (log/info "Server started on http://localhost:3000")))
+    (log/info "Server started on http://localhost:1300")))
 
 (defn stop! []
   (when-let [s @server*]

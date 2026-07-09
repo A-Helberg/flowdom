@@ -18,3 +18,14 @@
 
 (defn send! [text]
   (rpc/command 'chat/send! text))
+
+(defn room-messages
+  "A query with a REACTIVE argument: `room<` is an s/atom (anything
+  watchable). query follows watchable args — when the atom changes,
+  the running connection is closed and a fresh query starts for the
+  new value. Callers just see a flow."
+  [room<]
+  (rpc/query 'chat/room-messages room<))
+
+(defn send-to! [room text]
+  (rpc/command 'chat/send-to! room text))
