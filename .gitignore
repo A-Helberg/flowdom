@@ -3,6 +3,7 @@ out
 target
 .nrepl-port
 .lsp/
+.tieped-cache
 **/.clj-kondo/.cache
 **/.clj-kondo/imports
 
