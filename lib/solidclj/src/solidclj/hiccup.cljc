@@ -123,20 +123,11 @@
                                     add ^{:key id} on each item)
     {:ref (fn [el] …)}              DOM ref callback (fn only)"
   (:require [clojure.string]
-            [solidclj.satom         :as    satom]
-            ["solid-js"            :refer [createSignal onCleanup getOwner For Index Show Switch Match Suspense ErrorBoundary]]
-            ["solid-js/h"          :as    h-module]
-            ["solid-js/web"        :as    solid-web :refer [Dynamic Portal renderToString hydrate isServer ssrElement]]))
-
-;; solid-js/h ships an ESM build (`export { h as default }`) that shadow's
-;; browser bundler exposes under `.default`, and a CJS build
-;; (`module.exports = h`) that node's require() returns directly — e.g. in
-;; the node-test build. Unwrap whichever shape we got.
-(def ^:private h (or (.-default h-module) h-module))
-
-;; solid-js/h only exports `h` as a default. Fragment is a property on the
-;; hyperscript function itself (h.Fragment = ...), not a module-level export.
-(def ^:private Fragment (.-Fragment h))
+            [solidclj.satom   :as satom]
+            [solidclj.runtime :as rt]
+            ;; Browser/SSR-only features — deliberately NOT part of the
+            ;; solidclj.runtime seam; the JVM runtime does not offer them.
+            #?(:cljs ["solid-js/web" :as solid-web :refer [renderToString hydrate isServer ssrElement]])))
 
 (declare as-element)
 
@@ -153,13 +144,15 @@
   cljs.core/atom (or r/atom etc.) that the renderer ignores. Used only
   to warn in dev builds."
   [x]
-  (and (satisfies? IDeref x)
-       (satisfies? IWatchable x)
+  (and #?(:cljs (satisfies? IDeref x)
+          :clj  (instance? clojure.lang.IDeref x))
+       #?(:cljs (satisfies? IWatchable x)
+          :clj  (instance? clojure.lang.IRef x))
        (not (atom-like? x))))
 
 (defn- warn-plain-atom! [where]
-  (when ^boolean goog.DEBUG
-    (js/console.warn
+  (when rt/debug?
+    (rt/warn!
      (str "[solidclj.hiccup] plain atom in " where " is not reactive and "
           "is ignored. Use solidclj.api/atom (s/atom) for reactive state, "
           "or deref it explicitly for a snapshot."))))
@@ -176,16 +169,16 @@
   else is undefined."
   [tag]
   (let [s         (name tag)
-        hash-idx  (.indexOf s "#")
-        [base-classes id] (if (neg? hash-idx)
+        hash-idx  (clojure.string/index-of s "#")
+        [base-classes id] (if (nil? hash-idx)
                             [s nil]
-                            [(.substring s 0 hash-idx)
-                             (let [raw (.substring s (inc hash-idx))]
+                            [(subs s 0 hash-idx)
+                             (let [raw (subs s (inc hash-idx))]
                                (when-not (= "" raw) raw))])
-        parts     (.split base-classes ".")
-        base      (let [b (aget parts 0)]
-                    (if (= b "") "div" b))
-        classes   (->> (rest (array-seq parts))
+        parts     (clojure.string/split base-classes #"\.")
+        base      (let [b (first parts)]
+                    (if (or (nil? b) (= b "")) "div" b))
+        classes   (->> (rest parts)
                        (remove empty?)
                        vec)]
     [base classes id]))
@@ -197,22 +190,21 @@
   a shape it can actually apply."
   [s]
   (cond
-    (and (>= (.-length s) 2)
-         (= "--" (.substring s 0 2)))
+    (clojure.string/starts-with? s "--")
     s
 
     :else
-    (let [parts (.split s "-")]
-      (if (= 1 (.-length parts))
+    (let [parts (clojure.string/split s #"-")]
+      (if (= 1 (count parts))
         s
-        (str (aget parts 0)
+        (str (first parts)
              (apply str
                     (map (fn [p]
                            (if (= "" p)
                              ""
-                             (str (.toUpperCase (.charAt p 0))
-                                  (.substring p 1))))
-                         (rest (array-seq parts)))))))))
+                             (str (clojure.string/upper-case (subs p 0 1))
+                                  (subs p 1))))
+                         (rest parts))))))))
 
 (defn- style-key->css [k]
   (cond
@@ -226,14 +218,15 @@
   "Converts a :style value to something Solid's `style` prop accepts:
    - nil           → nil
    - string        → string (CSS text passes through)
-   - map           → JS object with camelCase keys; atom values become
-                     Solid accessors so per-property reactivity is live
+   - map           → props object (via rt/->props) with camelCase keys;
+                     atom values become Solid accessors so per-property
+                     reactivity is live
    - else          → returned unchanged (Solid will handle accessors)"
   [v]
   (cond
     (nil? v)       nil
     (string? v)    v
-    (map? v)       (clj->js
+    (map? v)       (rt/->props
                     (reduce-kv
                      (fn [m k val]
                        (assoc m (style-key->css k)
@@ -273,7 +266,8 @@
    - string         → [str nil]
    - keyword        → [(name kw) nil]
    - vector / seq   → [(joined string) nil]
-   - map            → [nil JS-object suitable for Solid's :classList]
+   - map            → [nil props object (via rt/->props) suitable for
+                       Solid's :classList]
    - atom-like      → [Solid accessor returning a class string, nil]
    - fn             → [fn nil] (assumed to be a Solid accessor)
    - other          → [(str v) nil]"
@@ -282,7 +276,7 @@
     (nil? v)         [nil nil]
     (string? v)      [v nil]
     (keyword? v)     [(name v) nil]
-    (map? v)         [nil (clj->js
+    (map? v)         [nil (rt/->props
                            (reduce-kv
                             (fn [m k val]
                               (assoc m (if (keyword? k) (name k) (str k))
@@ -319,16 +313,16 @@
   a one-shot snapshot getter and warn in dev. Use atom-like values
   only inside the hiccup walker or under render to get live updates."
   [a]
-  (if (some? (getOwner))
-    (let [[get-v set-v] (createSignal nil)
+  (if (some? (rt/get-owner))
+    (let [[get-v set-v] (rt/create-signal nil)
           k             (gensym "solidclj.hiccup/atom-watch-")]
       (add-watch a k (fn [_k _ref _old new] (set-v (fn [_] new))))
-      (onCleanup (fn [] (remove-watch a k)))
+      (rt/on-cleanup (fn [] (remove-watch a k)))
       (set-v (fn [_] @a))
       get-v)
     (let [v @a]
-      (when ^boolean goog.DEBUG
-        (js/console.warn
+      (when rt/debug?
+        (rt/warn!
          (str "[solidclj.hiccup] atom bridged outside a reactive owner; "
               "taking a one-shot snapshot. Wrap in render/createRoot/"
               "component body for live updates.")))
@@ -395,7 +389,7 @@
                              cls-list (assoc :classList cls-list)
                              id       (assoc :id id)
                              style    (assoc :style style))]
-    (clj->js clj)))
+    (rt/->props clj)))
 
 (defn- renderable?
   "Reagent semantics: nil / true / false are dropped from child
@@ -466,7 +460,7 @@
       ;; `props.children`).
       (= tag :>)
       (let [js-comp (first more)
-            _       (when ^boolean goog.DEBUG
+            _       (when rt/debug?
                       (when-not (fn? js-comp)
                         (throw (ex-info "solidclj.hiccup: [:>] expects a JS component fn as the second element"
                                         {:received js-comp :hiccup hv}))))
@@ -474,7 +468,7 @@
             [props children] (if (map? (first rest*))
                                [(first rest*) (next rest*)]
                                [nil rest*])]
-        (apply h js-comp (normalize-props props [] nil)
+        (apply rt/h js-comp (normalize-props props [] nil)
                (walk-children children)))
 
       ;; ---- :for — Solid <For> --------------------------------------------
@@ -493,46 +487,55 @@
       (= tag :for)
       (let [{:keys [each]} (first more)
             render-fn      (second more)
-            ->js-arr       (fn [coll]
-                             (cond
-                               (nil? coll)   #js []
-                               (array? coll) coll
-                               :else         (to-array coll)))
             each-prop      (cond
                              (atom-like? each)
                              (let [g (atom->signal-getter each)]
-                               (fn [] (->js-arr (g))))
+                               (fn [] (rt/->each (g))))
 
                              (fn? each)
-                             (fn [] (->js-arr (each)))
+                             (fn [] (rt/->each (each)))
 
                              :else
-                             (->js-arr each))]
-        (h For
-                 #js {:each each-prop}
-                 (fn [item index]
-                   (as-element (render-fn item index)))))
+                             (rt/->each each))]
+        (rt/h rt/For
+              (rt/->props {:each each-prop})
+              (fn [item index]
+                ;; CLJS: evaluate h's deferred template HERE, inside the
+                ;; per-row root — the same dance as [:index] below. h
+                ;; defers building the element + wiring its reactive
+                ;; subtree until the returned thunk is called; left
+                ;; uncalled until Solid's insert unwraps it, the row's
+                ;; inner effects (e.g. a thunk reading `(index)`) wire
+                ;; under the LIST's insert effect instead of the row's
+                ;; root. Observable symptom: `(index)` never updates on
+                ;; reorder (rows move, stale indexes). Evaluating here
+                ;; also means row effects dispose with the row.
+                ;; JVM: no deferred templates — leave fn results for the
+                ;; runtime to slot.
+                (let [v (as-element (render-fn item index))]
+                  #?(:cljs (if (fn? v) (v) v)
+                     :clj  v)))))
 
       ;; ---- :<> — Fragment ------------------------------------------------
       ;; Render children as siblings with no wrapper element. Solid's
       ;; Fragment ignores props, so we walk children directly.
       (= tag :<>)
       (let [children (if (map? (first more)) (next more) more)]
-        (apply h Fragment nil (walk-children children)))
+        (apply rt/h rt/fragment nil (walk-children children)))
 
       ;; ---- :show — Solid <Show> -----------------------------------------
       ;; [:show {:when expr :fallback fb} & children]
       (= tag :show)
       (let [props    (first more)
-            _        (when ^boolean goog.DEBUG
+            _        (when rt/debug?
                        (when-not (map? props)
                          (throw (ex-info "solidclj.hiccup: [:show] requires a {:when ... :fallback ...} props map as the second element"
                                          {:received props :hiccup hv}))))
             {:keys [when fallback]} props
             children (next more)]
-        (apply h Show
-               #js {:when     (->getter when)
-                    :fallback (->renderable fallback)}
+        (apply rt/h rt/Show
+               (rt/->props {:when     (->getter when)
+                            :fallback (->renderable fallback)})
                (walk-children children)))
 
       ;; ---- :switch / :match — Solid <Switch> + <Match> -------------------
@@ -545,23 +548,23 @@
       ;; match vectors here directly and emit <Match> components.
       (= tag :switch)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:switch] requires a {:fallback ...} props map as the second element"
                                       {:received props :hiccup hv}))))
             {:keys [fallback]} props
             cases              (next more)]
-        (when ^boolean goog.DEBUG
+        (when rt/debug?
           (doseq [c cases]
             (when-not (and (vector? c) (= :match (first c)))
               (throw (ex-info "solidclj.hiccup: children of [:switch] must be [:match {:when ...} ...] vectors"
                               {:received c :hiccup hv})))))
-        (apply h Switch
-               #js {:fallback (->renderable fallback)}
+        (apply rt/h rt/Switch
+               (rt/->props {:fallback (->renderable fallback)})
                (map (fn [match-vec]
                       (let [[_ {:keys [when]} & body] match-vec]
-                        (apply h Match
-                               #js {:when (->getter when)}
+                        (apply rt/h rt/Match
+                               (rt/->props {:when (->getter when)})
                                (walk-children body))))
                     cases)))
 
@@ -573,7 +576,7 @@
       ;; locks this in as a dev-time error). In a release build, a stray
       ;; :match falls through to (keyword? tag) below and renders as an
       ;; (invalid but inert) <match> HTML element rather than crashing.
-      (and ^boolean goog.DEBUG (= tag :match))
+      (and rt/debug? (= tag :match))
       (throw (ex-info "solidclj.hiccup: [:match] is only valid as a direct child of [:switch]"
                       {:hiccup hv}))
 
@@ -589,20 +592,18 @@
       ;; getter that resolves the latest value on every read.
       (= tag :dynamic)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:dynamic] requires a {:component ...} props map as the second element"
                                       {:received props :hiccup hv}))))
             {:keys [component]} props
             children   (next more)
-            js-props   (normalize-props (dissoc props :component) [] nil)
             comp-fn    (cond
                          (atom-like? component) (atom->signal-getter component)
-                         :else                  (fn [] component))]
-        (js/Object.defineProperty
-         js-props "component"
-         #js {:configurable true :enumerable true :get comp-fn})
-        (apply h Dynamic js-props (walk-children children)))
+                         :else                  (fn [] component))
+            js-props   (-> (normalize-props (dissoc props :component) [] nil)
+                           (rt/lazy-prop! :component comp-fn))]
+        (apply rt/h rt/Dynamic js-props (walk-children children)))
 
       ;; ---- :portal — Solid <Portal> --------------------------------------
       ;; [:portal {:mount el :use-shadow? false :is-svg? false} & children]
@@ -613,7 +614,7 @@
       ;; getter so Solid reads the live value inside its tracking memo.
       (= tag :portal)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:portal] requires a {:mount ...} props map as the second element"
                                       {:received props :hiccup hv}))))
@@ -623,13 +624,12 @@
                          (atom-like? mount) (atom->signal-getter mount)
                          (fn? mount)        mount
                          :else              (fn [] mount))
-            js-props   #js {}]
-        (js/Object.defineProperty
-         js-props "mount"
-         #js {:configurable true :enumerable true :get mount-fn})
-        (when (some? use-shadow?) (aset js-props "useShadow" use-shadow?))
-        (when (some? is-svg?)     (aset js-props "isSVG"     is-svg?))
-        (apply h Portal js-props (walk-children children)))
+            js-props   (-> (rt/->props
+                            (cond-> {}
+                              (some? use-shadow?) (assoc :useShadow use-shadow?)
+                              (some? is-svg?)     (assoc :isSVG is-svg?)))
+                           (rt/lazy-prop! :mount mount-fn))]
+        (apply rt/h rt/Portal js-props (walk-children children)))
 
       ;; ---- :suspense — Solid <Suspense> ----------------------------------
       ;; [:suspense {:fallback fb} & children]
@@ -638,14 +638,14 @@
       ;; ready. :fallback renders while resources are pending.
       (= tag :suspense)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:suspense] requires a {:fallback ...} props map as the second element"
                                       {:received props :hiccup hv}))))
             {:keys [fallback]} props
             children (next more)]
-        (apply h Suspense
-               #js {:fallback (->renderable fallback)}
+        (apply rt/h rt/Suspense
+               (rt/->props {:fallback (->renderable fallback)})
                (walk-children children)))
 
       ;; ---- :error-boundary — Solid <ErrorBoundary> -----------------------
@@ -658,7 +658,7 @@
       ;; access to the error/reset.
       (= tag :error-boundary)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:error-boundary] requires a {:fallback ...} props map as the second element"
                                       {:received props :hiccup hv}))))
@@ -669,9 +669,17 @@
                        (fn [err reset] (as-element (fallback err reset)))
                        :else
                        (->renderable fallback))]
-        (apply h ErrorBoundary
-               #js {:fallback fb-fn}
-               (walk-children children)))
+        ;; CLJS: children walk lazily into h and Solid catches throws
+        ;; from deferred component evaluation. JVM: walking is eager
+        ;; (apply + chunked seqs realize children BEFORE h runs), so
+        ;; the boundary receives a builder thunk instead and walks the
+        ;; children inside its own try/catch.
+        #?(:cljs (apply rt/h rt/ErrorBoundary
+                        (rt/->props {:fallback fb-fn})
+                        (walk-children children))
+           :clj  (rt/h rt/ErrorBoundary
+                       (rt/->props {:fallback fb-fn})
+                       (fn [] (vec (walk-children children))))))
 
       ;; ---- :index — Solid <Index> ----------------------------------------
       ;; [:index {:each xs} render-fn]
@@ -687,45 +695,44 @@
       ;; cheap.
       (= tag :index)
       (let [props (first more)
-            _     (when ^boolean goog.DEBUG
+            _     (when rt/debug?
                     (when-not (map? props)
                       (throw (ex-info "solidclj.hiccup: [:index] requires a {:each ...} props map as the second element"
                                       {:received props :hiccup hv}))))
             {:keys [each]} props
             render-fn      (second more)
-            ->js-arr       (fn [coll]
-                             (cond
-                               (nil? coll)   #js []
-                               (array? coll) coll
-                               :else         (to-array coll)))
             each-prop      (cond
                              (atom-like? each)
                              (let [g (atom->signal-getter each)]
-                               (fn [] (->js-arr (g))))
+                               (fn [] (rt/->each (g))))
 
                              (fn? each)
-                             (fn [] (->js-arr (each)))
+                             (fn [] (rt/->each (each)))
 
                              :else
-                             (->js-arr each))]
-        (h Index
-                 #js {:each each-prop}
-                 (fn [item-getter index]
-                   ;; h sometimes returns a thunk that defers
-                   ;; building the actual element + wiring its reactive
-                   ;; subtree until it's called. <Index> calls our
-                   ;; render-fn once per position (with a stable
-                   ;; `item-getter`), so the per-position owner only
-                   ;; gets a chance to set up the inner render effects
-                   ;; (i.e. the (fn [] (item-getter)) child thunks) if
-                   ;; we evaluate the deferred template HERE — inside
-                   ;; the per-position scope. Skipping this leaves the
-                   ;; thunk uninvoked, items mutate but DOM doesn't
-                   ;; update. <For> doesn't need the same dance: it
-                   ;; calls render-fn again on every keyed update, so
-                   ;; the deferred-template path naturally re-runs.
-                   (let [v (as-element (render-fn item-getter index))]
-                     (if (fn? v) (v) v)))))
+                             (rt/->each each))]
+        (rt/h rt/Index
+              (rt/->props {:each each-prop})
+              (fn [item-getter index]
+                ;; CLJS: h sometimes returns a thunk that defers
+                ;; building the actual element + wiring its reactive
+                ;; subtree until it's called. <Index> calls our
+                ;; render-fn once per position (with a stable
+                ;; `item-getter`), so the per-position owner only
+                ;; gets a chance to set up the inner render effects
+                ;; (i.e. the (fn [] (item-getter)) child thunks) if
+                ;; we evaluate the deferred template HERE — inside
+                ;; the per-position scope. Skipping this leaves the
+                ;; thunk uninvoked, items mutate but DOM doesn't
+                ;; update. <For> doesn't need the same dance: it
+                ;; calls render-fn again on every keyed update, so
+                ;; the deferred-template path naturally re-runs.
+                ;; JVM: no deferred templates — leave a fn result
+                ;; as-is so the runtime slots it (calling it here
+                ;; would freeze it into a static value instead).
+                (let [v (as-element (render-fn item-getter index))]
+                  #?(:cljs (if (fn? v) (v) v)
+                     :clj  v)))))
 
       (keyword? tag)
       (let [[base shorthand-classes shorthand-id] (parse-tag tag)
@@ -734,25 +741,27 @@
                                [nil more])
             js-props (normalize-props props shorthand-classes shorthand-id)
             walked   (walk-children children)]
-        (if isServer
-          (ssrElement base js-props (into-array walked) true)
-          (apply h base js-props walked)))
+        #?(:cljs (if isServer
+                   (ssrElement base js-props (into-array walked) true)
+                   (apply rt/h base js-props walked))
+           :clj  (apply rt/h base js-props walked)))
 
       (fn? tag)
       ;; Run the user component under SolidJS's component machinery so
       ;; we get a proper owner scope (cleanups, error boundaries, …).
       ;; The component fn is called once with positional args; whatever
       ;; hiccup it returns is walked into DOM.
-      (if isServer
-        (as-element (apply tag more))
-        (h (fn [_props] (as-element (apply tag more))) nil))
+      #?(:cljs (if isServer
+                 (as-element (apply tag more))
+                 (rt/h (fn [_props] (as-element (apply tag more))) nil))
+         :clj  (rt/h (fn [_props] (as-element (apply tag more))) nil))
 
       :else
       (throw (ex-info "solidclj.hiccup: invalid hiccup tag"
                       {:tag tag :hiccup hv})))))
 
 ;; NOTE: warned-keyless* grows unbounded. That's acceptable because the
-;; whole warning machinery is goog.DEBUG-gated and the set's only purpose
+;; whole warning machinery is rt/debug?-gated and the set's only purpose
 ;; is to dedupe dev-time console output during a single session.
 (defonce ^:private warned-keyless* (atom #{}))
 
@@ -760,13 +769,13 @@
   "Emits a console.warn once per equal first-vector identity. Dedup is
   by value equality so the same hiccup at the same call-site doesn't
   spam across renders. Fires when ANY vector in the seq lacks :key,
-  matching React's stricter behaviour. Guarded by goog.DEBUG."
+  matching React's stricter behaviour. Guarded by rt/debug?."
   [first-vec]
-  (when ^boolean goog.DEBUG
+  (when rt/debug?
     (when (and first-vec
                (not (contains? @warned-keyless* first-vec)))
       (swap! warned-keyless* conj first-vec)
-      (js/console.warn
+      (rt/warn!
        (str "[solidclj.hiccup] sequence rendered without :key metadata. "
             "Add ^{:key id} to each [:tag ...] in the seq, or use [:for] "
             "for keyed diffing.")))))
@@ -787,29 +796,119 @@
     (seq? form)
     (let [items     (filter renderable? form)
           vec-items (filter vector? items)]
-      (when (and ^boolean goog.DEBUG
+      (when (and rt/debug?
                  (< 1 (count vec-items))
                  (not (every? #(get (meta %) :key) vec-items)))
         (warn-keyless-once! (first vec-items)))
-      (into-array (map as-element items)))
+      (rt/->children (map as-element items)))
 
-    (atom-like? form) (if isServer (as-element @form) (atom->thunk form))
+    (atom-like? form) #?(:cljs (if isServer (as-element @form) (atom->thunk form))
+                         :clj  (atom->thunk form))
     (plain-watchable? form) (do (warn-plain-atom! "a child slot") nil)
-    (fn? form)            (if isServer (as-element (form)) (fn [] (as-element (form))))
+    (fn? form)            #?(:cljs (if isServer (as-element (form)) (fn [] (as-element (form))))
+                             :clj  (fn [] (as-element (form))))
     :else                 form))
 
-(defn render
-  "Reagent-style mount: takes a hiccup form and a DOM root element,
+#?(:cljs
+   (defn render
+     "Reagent-style mount: takes a hiccup form and a DOM root element,
   and returns SolidJS's dispose fn."
-  [hiccup root]
-  (solid-web/render #(as-element hiccup) root))
+     [hiccup root]
+     (solid-web/render #(as-element hiccup) root))
 
-(defn render-to-string
-  "Server-side render: returns an HTML string for `hiccup`."
-  [hiccup]
-  (renderToString #(as-element hiccup)))
+   :clj
+   (defn render
+     "JVM render: builds a LIVE reactive tree from `hiccup` — swap! a
+  satom and the tree updates fine-grained, exactly like the browser.
+  Returns {:tree node :dispose fn}. Read the current state at any
+  point with `snapshot`; call :dispose (or use `with-render`) to tear
+  down every effect, watcher and cleanup."
+     [hiccup]
+     (let [[tree dispose] (rt/create-root #(rt/insert (as-element hiccup)))]
+       {:tree tree :dispose dispose})))
 
-(defn hydrate-app
-  "Client-side hydration: attach to SSR markup in `root`."
-  [hiccup root]
-  (hydrate #(as-element hiccup) root))
+#?(:clj
+   (do
+     (defn- snap-props
+       "Props for a snapshot: :classList's truthy entries merge into
+  :class (that's what the DOM shows), nil-valued props drop (Solid
+  removes those attributes), everything else — including handler
+  fns — passes through as data."
+       [props]
+       (let [cl     (:classList props)
+             extras (when (map? cl)
+                      (keep (fn [[k v]] (when (rt/js-truthy? v) (str k))) cl))
+             base-c (:class props)
+             cls    (cond-> []
+                      (and (some? base-c) (not= "" base-c)) (conj (str base-c))
+                      (seq extras) (into extras))
+             m      (dissoc props :classList :class)
+             m      (if (seq cls)
+                      (assoc m :class (clojure.string/join " " cls))
+                      m)]
+         (reduce-kv (fn [acc k v] (if (nil? v) acc (assoc acc k v))) {} m)))
+
+     (declare snap-element)
+
+     (defn- snap-splice
+       "Serialize a tree value into a SEQ of hiccup forms: slots
+  resolve to their content, node-list vectors flatten (that's what
+  the DOM does), nil/booleans drop."
+       [x]
+       (cond
+         (nil? x)             []
+         (boolean? x)         []
+         (rt/slot-node? x)    (snap-splice (:content @x))
+         (rt/element-node? x) [(snap-element x)]
+         (rt/portal-node? x)  [(into [:portal] (mapcat snap-splice (:children @x)))]
+         (sequential? x)      (mapcat snap-splice x)
+         :else                [x]))
+
+     (defn- snap-element [el]
+       (let [{:keys [tag props children]} @el
+             p (snap-props props)]
+         (into (if (seq p) [(keyword tag) p] [(keyword tag)])
+               (mapcat snap-splice children))))
+
+     (defn snapshot
+       "Serialize a live tree (or the {:tree …} handle `render`
+  returns) to plain hiccup at this point in time: control flow
+  collapsed to what is rendered, thunks and satoms materialized,
+  handler fns preserved in props (call them from tests, then snapshot
+  again). Portal content appears under a [:portal …] marker.
+
+  The output is standard hiccup — query it with anything that eats
+  data (get-in, tree-seq, hiccup-find, matcher-combinators) or feed
+  it to a hiccup→HTML library for static SSR.
+
+  A root that renders multiple forms (fragment / [:for] at top level)
+  returns a vector OF forms; a root that renders nothing returns nil."
+       [x]
+       (let [root  (if (and (map? x) (contains? x :tree)) (:tree x) x)
+             forms (vec (snap-splice root))]
+         (case (count forms)
+           0 nil
+           1 (nth forms 0)
+           forms)))
+
+     (defmacro with-render
+       "Render `hiccup`, bind the handle, run `body`, always dispose:
+
+      (with-render [t [counter {:start 5}]]
+        (is (= [:div \"5\"] (snapshot t))))"
+       [[sym hiccup] & body]
+       `(let [~sym (render ~hiccup)]
+          (try ~@body (finally ((:dispose ~sym))))))))
+
+#?(:cljs
+   (defn render-to-string
+     "Server-side render: returns an HTML string for `hiccup`. CLJS-only
+  (node SSR with hydration markers)."
+     [hiccup]
+     (renderToString #(as-element hiccup))))
+
+#?(:cljs
+   (defn hydrate-app
+     "Client-side hydration: attach to SSR markup in `root`."
+     [hiccup root]
+     (hydrate #(as-element hiccup) root)))

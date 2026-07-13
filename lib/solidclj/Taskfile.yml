@@ -12,3 +12,8 @@ tasks:
     cmds:
       - bunx shadow-cljs -A:cljs compile node-test
       - node --conditions=browser out/node-tests.js
+
+  test-jvm:
+    desc: Run the JVM test suite (kaocha) against the simulator runtime
+    cmds:
+      - clojure -M:jvm-test

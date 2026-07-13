@@ -8,6 +8,16 @@
 
   :test {:extra-paths ["test"]}
 
+  ;; JVM tests: kaocha runner (deep-diff2 output makes failing hiccup
+  ;; snapshots readable), matcher-combinators for partial/predicate
+  ;; matching, hiccup-find for CSS-ish queries over snapshots.
+  ;; Run with: clojure -M:jvm-test
+  :jvm-test {:extra-paths ["test"]
+             :extra-deps  {lambdaisland/kaocha         {:mvn/version "1.91.1392"}
+                           nubank/matcher-combinators  {:mvn/version "3.10.1"}
+                           hiccup-find/hiccup-find     {:mvn/version "2022.10.03"}}
+             :main-opts   ["-m" "kaocha.runner"]}
+
   ;; Peer dep — consumers supply their own reagent. Listed here so the
   ;; namespace compiles locally without requiring a consumer project.
   :reagent {:extra-deps {reagent/reagent {:mvn/version "1.2.0"}}}}}
