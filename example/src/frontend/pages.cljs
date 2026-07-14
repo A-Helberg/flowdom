@@ -36,6 +36,7 @@
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.datomic-txes :as datomic-txes]
+            [frontend.examples.live-by-hand :as live-by-hand]
             [frontend.examples.live-notes :as live-notes]
             ;; compiled into the app (not just inlined as source) so
             ;; the server-values page's try-it-from-the-console
@@ -570,18 +571,15 @@
         "is one " [:code "m/ap"] " — attach the queue, " [:code ".take"]
         " forever on the blocking executor, detach on cancel. No "
         "adapter thread, no core.async, no callbacks."]
-       [:p "Two things the code insists on. Datomic keeps " [:em "one"]
+       [:p "One thing the code insists on: Datomic keeps " [:em "one"]
         " report queue per connection and concurrent takers steal from "
         "each other, so the listener runs once and is shared with "
         [:code "m/stream"] " — lazy and refcounted, the JVM twin of "
         [:code "sm/hold"] "'s lifecycle: the queue attaches when the "
-        "first query subscribes and detaches when the last client "
-        "disconnects. And live queries filter twice: an optional "
-        [:code ":relevant?"] " predicate skips the re-query for "
-        "transactions that can't affect the answer, and "
-        [:em "dedupe"] " keeps unchanged answers off the wire either "
-        "way. The next page turns this pipeline into the standard "
-        "read-endpoint shape."]
+        "first subscriber arrives and detaches when the last one "
+        "leaves. The demo below is just the feed: press the buttons "
+        "and watch reports land. The next page turns this feed into "
+        "a live query, by hand."]
        [:p [:strong "The honest caveat again:"] " no JVM on this "
         "static site. The demo below runs the same pipeline against a "
         "browser stand-in — a map plays the database, an atom watch "
@@ -606,81 +604,84 @@
       [{:source    (rc/inline "frontend/examples/datomic_txes.cljs")
         :component datomic-txes/example}]}
 
+     {:id    :live-by-hand
+      :title "Live queries by hand"
+      :prose
+      [:<>
+       [:p "A live query is two pieces, and only one of them is new. "
+        "The old piece: a pure function of a database value — "
+        [:code "(all-notes db)"] " — testable by calling it with any "
+        "db in hand, no flows, no server. The new piece: which "
+        "databases to run it against. The previous page's feed "
+        "answers that — the db as of now, then " [:code ":db-after"]
+        " of every report."]
+       [:p "Read the pipeline in the demo inside out: " [:code "db<"]
+        " emits database values; " [:code "(map all-notes)"] " turns "
+        "each into an answer; " [:code "dedupe"] " drops answers "
+        "equal to the last — so a transaction that can't change the "
+        "result re-runs the query and emits " [:em "nothing"] " (the "
+        "irrelevant-tx button; watch for the absence of a flash). "
+        "Hold the flow and the list is live."]
+       [:p "Notice what stayed pure. " [:code "all-notes"] " never "
+        "learns about reports or flows. And because database values "
+        "are immutable, 'the answer at t' needs no flow at all — "
+        [:code "(all-notes (fd/as-of t))"] " is a plain function "
+        "call, frozen forever. This composition is the standard "
+        "shape for every read endpoint, which is exactly why you "
+        "shouldn't have to write it by hand every time — next page."]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/live_by_hand.cljs")
+        :component live-by-hand/example}]}
+
      {:id    :live-queries
       :title "Live queries"
       :prose
       [:<>
-       [:p "The chat page's components still " [:em "acquire"] " data: "
-        "calling the api function at render time opens a connection. "
-        "This page makes reads pure as well. Backend authors write "
-        [:strong "pure functions of a database value"] " — "
-        [:code "(f db)"] " → shaped, authorized data — and pass real "
-        "db values around, because on a Datomic peer they are cheap. "
-        "When a value crosses the wire it can't ship its data, so "
-        [:code "solidrpc.transit"] " serializes it as a ref — "
-        [:code "#solid/db {:basis-t 1010}"] " — and deserializes it "
-        "back into a database value (as-of) on the way in. The "
-        "exchange happens at the serialization boundary: server code "
-        "sees databases, the client holds an opaque generic "
-        [:code "Ref"] " it passes around like any value. This app's facades "
-        "treat a " [:code "nil"] " db as 'now' — their convention, "
-        "applied in " [:code "api.notes"] ", not the library's: "
-        "nothing in the transport or in " [:code "live"] " interprets "
-        "nil."]
-       [:p [:code "solidrpc.live/live"] " lifts a pure query fn into "
-        "a flow " [:em "anchored"] " at the db you hand it — a lower "
-        "bound: the flow catches up to the present immediately and "
-        "never shows anything older than the anchor, then re-emits "
-        "whenever a transaction changes the answer. Queries anchored "
-        "to the same value start from the same point in time, and a "
-        "command response carrying the post-transaction db gives "
-        "read-your-writes by construction. And a fixed point in time "
-        "needs no flow at all: an " [:em "as-of view"] " is an "
-        "immutable value, so 'the answer at t' is plain function "
-        "application — " [:code "(all-notes (d/as-of db t))"] "."]
-       [:p "The api namespace colocates the pure fn with its "
-        [:code "<"] "-suffixed facade, registered under its "
-        [:em "own"] " symbol — the client's "
-        [:code "(call/query `all-notes< db)"] " resolves to the same "
-        "var whose " [:code ":clj"] " branch produces the flow, so "
-        "the two sides cannot drift apart. Facades return flows; "
-        "views hold them at point of use. Calling a read runs "
+       [:p "The composition you just wrote is the shape of every "
+        "read endpoint, so " [:code "solidrpc.live"] " packages it: "
+        [:code "(live/live env db f)"] " is the previous page's "
+        "pipeline — start from " [:code "db"] ", re-run " [:code "f"]
+        " per report, dedupe — where " [:code "env"] " is your store "
+        "as two keys, " [:code "{:db (fn [] current) :reports flow}"]
+        ". One thing is added on top: an optional "
+        [:code ":relevant?"] " predicate on the tx-report, checked "
+        [:em "before"] " the query re-runs. Dedupe already keeps "
+        "unchanged answers off the wire; " [:code ":relevant?"]
+        " skips the re-query itself — \"did this transaction touch a "
+        [:code ":note/*"] " attribute\" — which matters once queries "
+        "are expensive."]
+       [:p "The convention that goes with it: the api namespace "
+        "colocates the pure fn with its " [:code "<"] "-suffixed "
+        "facade, registered under its " [:em "own"] " symbol — the "
+        "client's " [:code "(call/query `all-notes< db)"] " resolves "
+        "to the same var whose " [:code ":clj"] " branch produces the "
+        "flow, so the two sides cannot drift apart. Facades return "
+        "flows; views hold them at point of use. Calling a read runs "
         "nothing — a flow is a recipe, and work starts when a "
         "component renders the hold. The same component runs live in "
         "the browser and renders on the JVM without mocks (see the "
         "Testing section)."]
-       [:p "Security is unchanged from the chat page: the wire only "
-        "carries endpoint-shaped results — no datoms, no replication "
-        "— and the server does not restrict which t a client may "
-        "name. The trust boundary is the query fn "
-        "(authorize against the present, read domain data at t); a "
-        "ref is usually just a re-observation of answers the client "
-        "was already served, and data that must not be readable at "
-        [:em "any"] " t is excision's job."]
-       [:p "The db is the simple case: its resolver needs only the "
-        "conn, so its handlers are built once, closing over it. "
-        "Value types that need the " [:em "request"] " to reconstruct "
-        "— a current user from a session — differ only in what their "
-        "closure captures. Both kinds are supplied together where you "
-        "mount the rpc handlers; the next page shows that wired."]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
-        "server runs — against the previous page's browser stand-in, "
-        "through " [:code "frontend.notes"] ": the static-site twin "
-        "of " [:code "api.notes"] ", exactly as " [:code "frontend.chat"]
+        "server runs — against the browser stand-in, through "
+        [:code "frontend.notes"] ": the static-site twin of "
+        [:code "api.notes"] ", exactly as " [:code "frontend.chat"]
         " twins a real chat api. Both panels are pure components — "
-        [:code "[live-panel db]"] " holds the facade's flow (lazy: "
-        "calling it runs nothing), and " [:code "[pinned-panel db]"]
-        " is a plain function call against an as-of value; only the "
-        "demo shell with its buttons performs effects. Transact and "
-        "the live panel updates; the irrelevant tx "
-        "is filtered by " [:code ":relevant?"] " before the query even "
-        "re-runs; pin an as-of view and it stays frozen while the "
-        "live panel moves on — because it isn't subscribed to "
-        "anything, it's a function call."]
-       [:p "The transit registration and storage wiring live in "
-        [:code "server.notes"] ", shown on the previous page. The "
-        "pattern adds one file to your app:"]
+        [:code "[live-panel db]"] " holds the facade's flow, and "
+        [:code "[pinned-panel db]"] " is the previous page's "
+        "function-call-against-a-value, no flow at all; only the "
+        "demo shell with its buttons performs effects."]
+       [:p "Now notice the awkward part. " [:code "all-notes<"]
+        " takes a database — and a browser can't have one. The demo "
+        "only pins as-of views because the fake store lives in the "
+        "browser, values at hand; against a real server the client "
+        "can pass nothing but " [:code "nil"] " (this app's facades "
+        "treat that as 'now') and take whatever arrives. Queries on "
+        "one page get no common starting point, a command can't hand "
+        "back the database that contains its write, and there is no "
+        "way to tell a test or an SSR render 'this exact state'. The "
+        "next page fixes that."]
+       [:p "The pattern adds one file to your app:"]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The api namespace (api.notes)"]
@@ -693,16 +694,16 @@
       :title "Server values"
       :prose
       [:<>
-       [:p "The previous page made reads pure: " [:code "all-notes"]
-        " is a function of a database value it receives as an "
-        "argument. Push that one step further and you hit a wall. A "
-        "query that depends on who is asking wants the same shape — "
+       [:p "The previous page ended on the wall: "
+        [:code "all-notes<"] " takes a database, and a browser can't "
+        "have one. It isn't only the db — a query that depends on "
+        "who is asking wants the same shape, "
         [:code "(visible-notes db user)"] ", a function of the user, "
         "not of a session lurking somewhere — because arguments are "
         "what made these fns testable: hand them values, no "
-        "machinery. But the user, like the db, is a value that only "
-        "exists " [:em "on the server"] ". So what does the client "
-        "pass?"]
+        "machinery. But the db and the user are both values that "
+        "only exist " [:em "on the server"] ". So what does the "
+        "client pass?"]
        [:p "The two obvious answers both give something up. Shipping "
         "the value doesn't work: the db is too big, and a "
         "client-supplied user is an authentication bypass — the "
@@ -725,6 +726,19 @@
         "happens server-side — from your session store, a JWT, a db "
         "read; solidrpc never knows — the client can't forge what it "
         "never builds. A marker ref carries nothing at all."]
+       [:p "For the db, the name is a basis-t: a database value "
+        "leaves the server as " [:code "#solid/db {:basis-t 1010}"]
+        " and comes back as an " [:em "actual database value"]
+        " via " [:code "d/as-of"] ". That closes every gap the "
+        "previous page listed. The client passes the ref as "
+        [:code "all-notes<"] "'s db argument and the flow starts "
+        "from " [:em "that"] " database — a floor it immediately "
+        "catches up from, so you never see anything older than what "
+        "you hold. Queries handed the same ref share a starting "
+        "point; a command that returns the post-transaction db "
+        "(below) hands the client read-your-writes with no cache to "
+        "patch; and a test or SSR render given a ref is given an "
+        "exact, reproducible state."]
        [:p "Concretely, a value type is a tag, a marker, a facade, "
         "and one handler where you mount the rpc handlers. The "
         "handler contract: " [:code ":read-handlers"] " maps a tag "
@@ -810,6 +824,14 @@
         "derive " [:em "authorization"] " from the db inside the "
         "query fn — then open streams tighten on the transaction "
         "that revokes, not at reconnect."]
+       [:p "One security note, because as-of is a time machine: the "
+        "server does not restrict which t a client may name, and "
+        "doesn't need to. The wire still only carries "
+        "endpoint-shaped results; the trust boundary is the query fn "
+        "(authorize against the present, read domain data at t); a "
+        "ref is usually a re-observation of answers the client was "
+        "already served; and data that must not be readable at "
+        [:em "any"] " t is excision's job."]
        [:p [:strong "The honest caveat:"] " no server on this static "
         "site, so no live demo. Both value types are real in the "
         "example app (api.server-info, api.viewer, mounted in "

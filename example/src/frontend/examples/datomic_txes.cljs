@@ -5,38 +5,16 @@
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 
-;; solidrpc.live's db-flow, transposed to the browser: the db as of
-;; now, then db-after of every report (m/?> forks the block per
-;; report).
-(def db< (m/ap (m/amb (fd/db) (:db-after (m/?> fd/reports)))))
-
-;; …and its query stage, same transposition — on the server `qf`
-;; would be d/q against a real database value (see solidrpc.live/live
-;; and server.notes for the real thing).
-(defn- q-flow [qf]
-  (m/eduction (map qf) (dedupe) db<))
-
-;; a live query: re-runs on every transaction, but dedupe means only
-;; CHANGED answers come through — ping! re-runs it and emits nothing.
-(defonce notes
-  (sm/hold (q-flow (fn [db] (into [] (keep :note/text) (vals db))))
-           :initial []))
-
-;; and the raw report feed, accumulated with m/reductions.
+;; the raw report feed, accumulated with m/reductions — every
+;; transaction, as it lands
 (defonce feed
   (sm/hold (m/reductions conj [] fd/reports) :initial []))
 
 (defn example []
-  (h [:div {:class "space-y-4"}
+  (h [:div {:class "space-y-3"}
       [:div {:class "flex gap-2"}
        [ui/button {:on-click fd/add-note!} "transact a note"]
        [ui/button {:on-click fd/ping!} "transact something else"]]
-      [:div
-       [:p {:class "text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1"}
-        "live query — notes"]
-       [:ul
-        [:for {:each notes}
-         (fn [text _i] [:li {:class "font-mono text-sm"} text])]]]
       [:div
        [:p {:class "text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1"}
         "tx-report feed — newest first"]
