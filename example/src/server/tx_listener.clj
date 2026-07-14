@@ -31,30 +31,17 @@
     ;; cancel. (A try/finally around the loop below would NOT work:
     ;; m/amb forks the process and `finally` runs once per fork —
     ;; detaching the queue right after the first report.)
-    (let [^BlockingQueue queue
-          (m/?> (m/observe (fn [emit!]
-                             (emit! (d/tx-report-queue conn))
-                             #(d/remove-tx-report-queue conn))))]
-      (loop []
+   (let [^BlockingQueue queue
+         (m/?> (m/observe (fn [emit!]
+                            (emit! (d/tx-report-queue conn))
+                            #(d/remove-tx-report-queue conn))))]
+     (loop []
         ;; .take blocks, so park on the blocking executor; a
         ;; cancelled run interrupts the take and unwinds the loop.
-        (m/amb (m/? (m/via m/blk (.take queue)))
-               (recur))))))
+       (m/amb (m/? (m/via m/blk (.take queue)))
+              (recur))))))
 
-(defn db-flow
-  "A continuous flow of database values: the db as of now, then
-  :db-after of every report from `reports` (a running, shared
-  tx-report-flow). Latest-wins under load (m/relieve) — a live query
-  only ever needs the newest db."
-  [conn reports]
-  (m/relieve {}
-             (m/ap (m/amb (d/db conn)
-                          (:db-after (m/?> reports))))))
-
-(defn q-flow
-  "A live query: runs `qf` — any function of a database value (d/q,
-  d/pull, …) — against every db from `db<` and emits the results,
-  deduplicated. Unrelated transactions re-run the query but emit
-  nothing: subscribers only hear about answers that changed."
-  [qf db<]
-  (m/eduction (map qf) (dedupe) db<))
+;; db-flow and q-flow moved to solidrpc.live, generalized: the same
+;; composition is now (live/live env db-ref f), storage-agnostic and
+;; with pinned (as-of) reads and :relevant? filtering. See
+;; server.notes for the wiring.

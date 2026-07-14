@@ -8,7 +8,7 @@
    [solidrpc.server :as solidrpc]
    ;; Require api namespaces so their vars exist before registration.
    [api.clock]
-   [server.notes]))
+   [api.notes]))
 
 ;; ---------------------------------------------------------------------------
 ;; API function whitelist — only registered vars are reachable via the transport.
@@ -18,8 +18,11 @@
 (registry/register! #'api.clock/slow-time-flow)
 (registry/register! #'api.clock/echo)
 (registry/register! #'api.clock/scoreboard-flow)
-(registry/register! #'server.notes/notes)
-(registry/register! #'server.notes/add-note!)
+;; the cljc facades register under their own symbols: the client's
+;; (call/query `all-notes< db) resolves to the same var, whose :clj
+;; branch produces the flow — one name, nothing to drift.
+(registry/register! #'api.notes/all-notes<)
+(registry/register! #'api.notes/add-note!)
 
 ;; ---------------------------------------------------------------------------
 ;; Router & server

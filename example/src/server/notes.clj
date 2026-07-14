@@ -1,17 +1,24 @@
 (ns server.notes
-  "The tx-listener wired end to end: an in-memory Datomic database
-  whose live query results stream to browsers over solidrpc.
-  Registered in server.core — with the example server running, try it
-  from a REPL:
+  "Storage wiring for the notes domain — everything here is about the
+  Datomic connection; the domain logic (queries, facades) lives in
+  api.notes, colocated with its client side.
 
-      (require '[server.notes :as notes])
+  This ns also registers the db-as-value transit handlers: a db value
+  crossing the wire serializes as #solid/db {:basis-t t}, and an
+  incoming ref deserializes back into an actual db value (as-of), so
+  endpoint fns receive databases, never refs. That registration is
+  the middleware: resolution happens at the serialization boundary
+  and application code never sees it.
+
+  With the example server running, try it from a REPL:
+
+      (require '[api.notes :as notes])
       (notes/add-note! \"from the repl\")   ;; every connected client updates"
   (:require
    [datomic.api :as d]
-   [manifold.stream :as s]
    [missionary.core :as m]
    [server.tx-listener :as txl]
-   [taoensso.timbre :as log]))
+   [solidrpc.transit :as transit]))
 
 ;; ---------------------------------------------------------------------------
 ;; A throwaway in-memory database
@@ -33,45 +40,35 @@
 ;; disconnects.
 (defonce tx-reports (m/stream (txl/tx-report-flow conn)))
 
-;; ---------------------------------------------------------------------------
-;; missionary → manifold: solidrpc streams manifold sources over SSE
-;; ---------------------------------------------------------------------------
-
-(defn- flow->stream
-  "Runs a missionary flow into a manifold stream. The blocking put is
-  the backpressure; closing the stream (client disconnected) cancels
-  the flow, releasing its m/stream subscriptions."
-  [flow]
-  (let [out    (s/stream 16)
-        cancel ((m/reduce (fn [_ v] @(s/put! out v) nil) nil flow)
-                (fn [_] (s/close! out))
-                (fn [e]
-                  ;; a cancelled run fails by design — only log failures
-                  ;; that happened while anyone was still listening.
-                  (when-not (s/closed? out)
-                    (log/error e "flow->stream: flow failed"))
-                  (s/close! out)))]
-    (s/on-closed out cancel)
-    out))
+(def env
+  "The solidrpc.live env for this connection."
+  {:db      (fn [] (d/db conn))
+   :reports tx-reports})
 
 ;; ---------------------------------------------------------------------------
-;; The rpc surface (whitelisted in server.core)
+;; db-as-value ↔ wire ref, at the transit boundary
 ;; ---------------------------------------------------------------------------
 
-(defn- all-notes [db]
-  (->> (d/q '[:find ?e ?text
-              :where [?e :note/text ?text]] db)
-       (sort-by first)
-       (mapv second)))
+(defonce ^:private transit-handlers
+  (do
+    ;; out: a db value's wire form is its basis-t — nothing else crosses
+    (transit/register-write-handler! datomic.db.Db transit/db-tag
+                                     (fn [db] {:basis-t (d/basis-t db)}))
+    ;; in: the ref becomes an actual db value again. No clamping — the
+    ;; trust boundary is the query fn (authorize against the present,
+    ;; read domain data at t), and data that must not be readable at
+    ;; ANY t is excision's job.
+    (transit/register-read-handler! transit/db-tag
+                                    (fn [{:keys [basis-t]}]
+                                      (let [db (d/db conn)]
+                                        (cond-> db basis-t (d/as-of basis-t)))))
+    :registered))
 
-(defn notes
-  "Query: every note, re-emitted (deduped) whenever a transaction
-  changes the answer."
-  []
-  (flow->stream (txl/q-flow all-notes (txl/db-flow conn tx-reports))))
+;; ---------------------------------------------------------------------------
+;; Storage commands
+;; ---------------------------------------------------------------------------
 
 (defn add-note!
-  "Command."
   [text]
   (when (seq text)
     @(d/transact conn [{:note/text text}]))

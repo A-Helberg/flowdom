@@ -5,12 +5,14 @@
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 
-;; server.tx-listener/db-flow, transposed: the db as of now, then
-;; db-after of every report (m/?> forks the block per report).
+;; solidrpc.live's db-flow, transposed to the browser: the db as of
+;; now, then db-after of every report (m/?> forks the block per
+;; report).
 (def db< (m/ap (m/amb (fd/db) (:db-after (m/?> fd/reports)))))
 
-;; …/q-flow, same transposition — on the server `qf` would be d/q
-;; against a real database value.
+;; …and its query stage, same transposition — on the server `qf`
+;; would be d/q against a real database value (see solidrpc.live/live
+;; and server.notes for the real thing).
 (defn- q-flow [qf]
   (m/eduction (map qf) (dedupe) db<))
 

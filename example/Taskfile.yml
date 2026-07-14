@@ -33,6 +33,11 @@ tasks:
       - bunx shadow-cljs -A:cljs:test compile node-test
       - node --conditions=browser out/node-tests.js
 
+  test-jvm:
+    desc: Full-stack JVM tests — real components + solidrpc.live + datomic, no HTTP
+    cmds:
+      - clojure -M:jvm-test
+
   caddy:
     cmds:
       - caddy run

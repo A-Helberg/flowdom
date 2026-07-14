@@ -9,7 +9,7 @@ shadow-cljs + SolidJS project, but every piece has an equivalent in other
 stacks; adaptation notes are inline. Give this file to whoever (or whatever)
 is building the docs app for a new project.
 
-## The one load-bearing idea
+## The idea
 
 **Each example lives in its own source file, which is both compiled into the
 app (so it runs) and inlined as a string at build time (so it displays).**
@@ -189,7 +189,7 @@ Two cheap tests keep the whole site trustworthy:
 Because examples are real compiled code, the smoke test actually **executes
 every example** — a sample that throws on mount fails CI.
 
-## Optional flourishes (earn their keep here, adapt or skip)
+## Optional extras (adapt or skip)
 
 - **Flash-on-change**: a global `MutationObserver` that briefly outlines any
   DOM node that changes (like Chrome DevTools paint flashing), with a sidebar

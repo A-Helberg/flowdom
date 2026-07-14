@@ -15,4 +15,11 @@
 
   :test {:extra-paths ["test"]}
 
+  ;; JVM tests: render the real components against the in-process
+  ;; server stack (solidrpc.live + datomic) — zero HTTP, zero mocks.
+  ;; Run with: clojure -M:jvm-test
+  :jvm-test {:extra-paths ["test"]
+             :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+             :main-opts   ["-m" "kaocha.runner"]}
+
   :run {:exec-fn server.core/run}}}

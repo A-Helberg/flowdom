@@ -35,7 +35,8 @@
             [frontend.examples.missionary-tracked :as missionary-tracked]
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
-            [frontend.examples.datomic-txes :as datomic-txes]))
+            [frontend.examples.datomic-txes :as datomic-txes]
+            [frontend.examples.live-notes :as live-notes]))
 
 (def sections
   [{:title "Introduction"
@@ -570,9 +571,12 @@
         [:code "m/stream"] " — lazy and refcounted, the JVM twin of "
         [:code "sm/hold"] "'s lifecycle: the queue attaches when the "
         "first query subscribes and detaches when the last client "
-        "disconnects. And live queries " [:em "dedupe"] ": every "
-        "transaction re-runs them, but only changed answers reach the "
-        "wire."]
+        "disconnects. And live queries filter twice: an optional "
+        [:code ":relevant?"] " predicate skips the re-query for "
+        "transactions that can't affect the answer, and "
+        [:em "dedupe"] " keeps unchanged answers off the wire either "
+        "way. The next page turns this pipeline into the standard "
+        "read-endpoint shape."]
        [:p [:strong "The honest caveat again:"] " no JVM on this "
         "static site. The demo below runs the same pipeline against a "
         "browser stand-in — a map plays the database, an atom watch "
@@ -595,4 +599,127 @@
         [ui/code-block (rc/inline "frontend/fake_datomic.cljs")]]]
       :examples
       [{:source    (rc/inline "frontend/examples/datomic_txes.cljs")
-        :component datomic-txes/example}]}]}])
+        :component datomic-txes/example}]}
+
+     {:id    :live-queries
+      :title "Live queries"
+      :prose
+      [:<>
+       [:p "The chat page's components still " [:em "acquire"] " data: "
+        "calling the api function at render time opens a connection. "
+        "This page makes reads pure as well. Backend authors write "
+        [:strong "pure functions of a database value"] " — "
+        [:code "(f db)"] " → shaped, authorized data — and pass real "
+        "db values around, because on a Datomic peer they are cheap. "
+        "When a value crosses the wire it can't ship its data, so "
+        [:code "solidrpc.transit"] " serializes it as a ref — "
+        [:code "#solid/db {:basis-t 1010}"] " — and deserializes it "
+        "back into a database value (as-of) on the way in. The "
+        "exchange happens at the serialization boundary: server code "
+        "sees databases, the client holds an opaque " [:code "DbRef"]
+        " token it passes around like any value, and " [:code "nil"]
+        " means 'now'."]
+       [:p [:code "solidrpc.live/live"] " lifts a pure query fn into "
+        "a flow " [:em "anchored"] " at the db you hand it — a lower "
+        "bound: the flow catches up to the present immediately and "
+        "never shows anything older than the anchor, then re-emits "
+        "whenever a transaction changes the answer. Queries anchored "
+        "to the same value start from the same point in time, and a "
+        "command response carrying the post-transaction db gives "
+        "read-your-writes by construction. And a fixed point in time "
+        "needs no flow at all: an " [:em "as-of view"] " is an "
+        "immutable value, so 'the answer at t' is plain function "
+        "application — " [:code "(all-notes (d/as-of db t))"] "."]
+       [:p "The api namespace colocates the pure fn with its "
+        [:code "<"] "-suffixed facade, registered under its "
+        [:em "own"] " symbol — the client's "
+        [:code "(call/query `all-notes< db)"] " resolves to the same "
+        "var whose " [:code ":clj"] " branch produces the flow, so "
+        "the two sides cannot drift apart. Facades return flows; "
+        "views hold them at point of use. Calling a read runs "
+        "nothing — a flow is a recipe, and work starts when a "
+        "component renders the hold. The same component runs live in "
+        "the browser and renders on the JVM without mocks (see the "
+        "Testing section)."]
+       [:p "Security is unchanged from the chat page: the wire only "
+        "carries endpoint-shaped results — no datoms, no replication "
+        "— and the server does not restrict which t a client may "
+        "name. The trust boundary is the query fn "
+        "(authorize against the present, read domain data at t); a "
+        "ref is usually just a re-observation of answers the client "
+        "was already served, and data that must not be readable at "
+        [:em "any"] " t is excision's job."]
+       [:p "The demo below runs the " [:strong "real"] " combinator — "
+        [:code "solidrpc.live"] " is cljc, this is the same code the "
+        "server runs — against the previous page's browser stand-in, "
+        "through " [:code "frontend.notes"] ": the static-site twin "
+        "of " [:code "api.notes"] ", exactly as " [:code "frontend.chat"]
+        " twins a real chat api. Both panels are pure components — "
+        [:code "[live-panel db]"] " holds the facade's flow (lazy: "
+        "calling it runs nothing), and " [:code "[pinned-panel db]"]
+        " is a plain function call against an as-of value; only the "
+        "demo shell with its buttons performs effects. Transact and "
+        "the live panel updates; the irrelevant tx "
+        "is filtered by " [:code ":relevant?"] " before the query even "
+        "re-runs; pin an as-of view and it stays frozen while the "
+        "live panel moves on — because it isn't subscribed to "
+        "anything, it's a function call."]
+       [:p "The transit registration and storage wiring live in "
+        [:code "server.notes"] ", shown on the previous page. The "
+        "pattern adds one file to your app:"]
+       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The api namespace (api.notes)"]
+        [ui/code-block (rc/inline "api/notes.cljc")]]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/live_notes.cljs")
+        :component live-notes/example}]}]}
+
+   {:title "Testing"
+    :pages
+    [{:id    :jvm-testing
+      :title "Rendering on the JVM"
+      :prose
+      [:<>
+       [:p "The hiccup walker is cljc, and underneath it "
+        [:code "solidclj.runtime"] " has two implementations: real "
+        "solid-js in the browser, and a simulator on the JVM — "
+        "signals, effects, owners, cleanup, and all the control-flow "
+        "components, with the same semantics (a parity suite runs "
+        "identical fixtures against both and fails on drift). So "
+        "components render and " [:em "react"] " in plain Clojure: "
+        [:code "swap!"] " a satom and the tree updates fine-grained, "
+        "exactly like the browser."]
+       [:p "The API is three functions. " [:code "render"]
+        " builds a live tree, " [:code "snapshot"] " serializes it "
+        "back to plain hiccup at a point in time — control flow "
+        "collapsed to what's rendered, handler fns preserved in "
+        "props as data — and " [:code "with-render"] " scopes "
+        "disposal. There is no test library beyond that: snapshots "
+        "are standard hiccup, so " [:code "get-in"] ", "
+        [:code "tree-seq"] ", hiccup-find and matcher-combinators "
+        "are the query language, and you fire an event by calling "
+        "the handler you pulled out of a snapshot."]
+       [ui/code-block
+        "(deftest counter-behaves
+  (with-render [t [counter {:start 5}]]
+    (is (match? [:div [:span 5] [:button {:onClick fn?} \"+\"]]
+                (snapshot t)))
+    ((get-in (snapshot t) [2 1 :onClick]) :click)   ;; handlers are data
+    (is (= [:span 6] (nth (snapshot t) 1)))))"]
+       [:p "Because the missionary bridge and solidrpc.live are cljc "
+        "too, the whole stack runs in-process: the test below "
+        "renders the real notes component against the real facade, "
+        "the real live combinator and an in-memory Datomic — no "
+        "HTTP, no mocks. It types into the input by calling the "
+        "snapshot's " [:code ":onInput"] ", clicks Add, and asserts "
+        "the note comes back through the tx-report stream. Run it "
+        "with " [:code "task test-jvm"] "."]
+       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The full-stack test (frontend.notes-view-test)"]
+        [ui/code-block (rc/inline "frontend/notes_view_test.clj")]]
+       [:p "And because dbs are values, 'the answer at t' is a plain "
+        "function call — " [:code "(all-notes (d/as-of db t))"]
+        " — no flow, no render lifecycle, no awaiting. A reproducible "
+        "fixture is a value you keep."]]}]}])

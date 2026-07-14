@@ -12,19 +12,35 @@
 (defonce ^:private last-report (atom nil))
 (defonce ^:private t*          (atom 1000))
 (defonce ^:private eid*        (atom 1))
+;; every db value ever, keyed by basis-t — what lets `as-of` hand out
+;; immutable as-of views, Datomic's superpower faked in one map
+(defonce ^:private history*    (atom {1000 {1 {:note/text "first note"}}}))
 
 (defn db "The current database value." [] @db*)
+
+(defn basis-t "The t of the current database value." [] @t*)
+
+(defn as-of "The database value as-of `t` — immutable, forever." [t]
+  (get @history* t))
 
 ;; the browser twin of tx-report-flow: a discrete flow of tx-reports.
 (def reports
   (m/eduction (remove nil?) (m/watch last-report)))
 
+(def env
+  "A solidrpc.live env over this fake — the same two keys the real
+  server wires from Datomic (see server.notes/env)."
+  {:db      db
+   :reports reports})
+
 (defn transact! [datoms]
   (let [before @db*
         after  (reduce (fn [db [e a v]] (assoc-in db [e a] v))
-                       before datoms)]
+                       before datoms)
+        t      (swap! t* inc)] ;; d/basis-t, at home
     (reset! db* after)
-    (reset! last-report {:t         (swap! t* inc) ;; d/basis-t, at home
+    (swap! history* assoc t after)
+    (reset! last-report {:t         t
                          :db-before before
                          :db-after  after
                          :tx-data   datoms})))
