@@ -704,6 +704,26 @@
         "attaches when the first subscriber arrives, every later "
         "subscriber joins the running listener, and it detaches "
         "when the last one leaves."]
+       [:h2 "Late subscribers"]
+       [:p "Sharing has a consequence: " [:code "m/stream"]
+        " doesn't replay. A subscriber that arrives after ten "
+        "transactions sees only the eleventh — an event feed "
+        "announces the next change, never the present — so anything "
+        "built on the raw feed would show nothing until someone "
+        "writes. The feed's consumable form adds a catch-up head:"]
+       [ui/code-block
+        ";; server.notes
+(def tx-reports<
+  (m/ap (m/amb {:db-after (d/db conn) :tx-data []}
+               (m/?> tx-reports))))"]
+       [:p "The head reads the db at spawn — a flow is a recipe, so "
+        "every subscriber gets its own read, current as of the last "
+        "commit — and it carries no datoms: a sample of the "
+        "present, not news. Replaying the last real report would be "
+        "the obvious alternative, and it is subtly wrong: the lazy "
+        "listener only processes reports while someone is "
+        "subscribed, so a remembered report can be older than the "
+        "state a subscriber already holds."]
        [:p "The demo below watches the feed. A tx-report flow is a "
         "server flow like any other, so it reaches the browser "
         "exactly as the queries page taught — an api namespace "
@@ -750,14 +770,18 @@
       :title "Live queries by hand"
       :prose
       [:<>
-       [:p "A live query is two pieces, and only one of them is new. "
-        "The old piece: a pure function of a database value — "
-        [:code "(all-notes db)"] " — testable by calling it with any "
-        "db in hand, no flows, no server. The new piece: which "
-        "databases to run it against. The previous page's feed "
-        "answers that — the db as of now, then " [:code ":db-after"]
-        " of every report. Composed in the notes domain's api "
-        "namespace, the whole thing is:"]
+       [:p "The demos so far have all been live, but each flow was "
+        "shaped by hand for its one query — the chat page watched "
+        "an atom and mapped one function over it. A "
+        [:strong "live query"] " is the shape that generalizes: an "
+        "ordinary query — a pure function of a database value, "
+        [:code "(all-notes db)"] ", testable by calling it with any "
+        "db in hand, no flows, no server — re-run against the "
+        "databases the previous page's feed supplies: the head's "
+        "db, then the " [:code ":db-after"] " of every report. "
+        "The query never learns it is live; the feed decides when "
+        "it re-runs. Composed in the notes domain's api namespace, "
+        "the whole thing is:"]
        [ui/code-block
         "(ns api.notes
   (:require [missionary.core :as m]
@@ -774,18 +798,17 @@
 
 ;; the live part, by hand
 (defn all-notes< []
-  #?(:clj  (let [db< (m/ap (m/amb (d/db store/conn)
-                                  (:db-after (m/?> store/tx-reports))))]
+  #?(:clj  (let [db< (m/ap (:db-after (m/?> store/tx-reports<)))]
              (m/eduction (map all-notes) (dedupe) db<))
      :cljs (rpc/query `all-notes<)))"]
        [:p "Read the " [:code ":clj"] " branch inside out: "
-        [:code "db<"] " emits database values; "
-        [:code "(map all-notes)"] " turns each into an answer; "
-        [:code "dedupe"] " drops answers equal to the last — so a "
-        "transaction that can't change the result re-runs the query "
-        "and emits " [:em "nothing"] " (the irrelevant-tx button in "
-        "the demo; watch for the absence of a flash). Hold the flow "
-        "and the list is live."]
+        [:code "db<"] " emits database values — the head's, then "
+        "each report's; " [:code "(map all-notes)"] " turns each "
+        "into an answer; " [:code "dedupe"] " drops answers equal "
+        "to the last — so a transaction that can't change the "
+        "result re-runs the query and emits " [:em "nothing"] " "
+        "(the irrelevant-tx button in the demo; watch for the "
+        "absence of a flash). Hold the flow and the list is live."]
        [:p "Notice what stayed pure. " [:code "all-notes"] " never "
         "learns about reports or flows. And because database values "
         "are immutable, 'the answer at t' needs no flow at all — "
@@ -803,26 +826,43 @@
       [:<>
        [:p "The composition you just wrote is the shape of every "
         "read endpoint, so " [:code "solidrpc.live"] " packages it: "
-        [:code "(live/live env db f)"] " is the previous page's "
-        "pipeline — start from " [:code "db"] ", re-run " [:code "f"]
-        " per report, dedupe — where " [:code "env"] " is your store "
-        "as two keys, " [:code "{:db (fn [] current) :reports flow}"]
-        ". One thing is added on top: an optional "
+        [:code "(live/live tx-reports< db f)"] " is the previous "
+        "page's pipeline — the head's db, then " [:code ":db-after"]
+        " per report, each through " [:code "f"] ", deduplicated. "
+        "The store argument is the consumable feed itself; there is "
+        "nothing else to wire."]
+       [:p "One thing is added on top: an optional "
         [:code ":relevant?"] " predicate on the tx-report, checked "
         [:em "before"] " the query re-runs. Dedupe already keeps "
         "unchanged answers off the wire; " [:code ":relevant?"]
         " skips the re-query itself — \"did this transaction touch a "
         [:code ":note/*"] " attribute\" — which matters once queries "
-        "are expensive."]
+        "are expensive. The catch-up head is exempt: a fresh "
+        "subscriber must reach the present no matter what the last "
+        "transaction touched, so " [:code "live"] " never filters "
+        "the first report. The " [:code ":clj"] " branch you wrote "
+        "by hand becomes one call:"]
        [ui/code-block
-        ";; the :clj branch you wrote by hand, packaged
+        ";; api.notes
 (defn all-notes< [db]
-  #?(:clj  (live/live store/env (or db ((:db store/env)))
-                      all-notes :relevant? note-tx?)
+  #?(:clj  (live/live store/tx-reports< db all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))"]
        [:p "The facade also gained an argument: " [:code "live"]
         " starts from the db you hand it — the " [:strong "anchor"]
-        " — and this facade treats " [:code "nil"] " as 'now'."]
+        ", a floor under everything the flow shows — and "
+        [:code "nil"] " means no floor: the head already supplies "
+        "the present, so 'now' needs nothing from the caller."]
+       [:p "The one flow is also the design's real requirement: "
+        [:em "value semantics"] " — reports carry the new database "
+        "as an immutable value. The queries page's atom qualifies ("
+        [:code "m/watch"] " already emits the current value first, "
+        "then every change), Datomic qualifies for free, and so "
+        "does anything in that family. This is not a Datomic live "
+        "query, but it is an epochal-store live query: wire in a "
+        "Postgres or a Kafka topic and you build the reports "
+        "yourself — and a store that can't reconstruct its state at "
+        "a point in time has no anchors, so a command can't hand "
+        "back the database that contains its write."]
        [:h2 "The api namespace"]
        [:p "The convention: the api namespace colocates the pure fn "
         "with its " [:code "<"] "-suffixed facade, registered under "

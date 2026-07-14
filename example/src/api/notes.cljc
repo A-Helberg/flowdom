@@ -8,7 +8,8 @@
   - `all-notes<` lifts it: the `<` says flow. Its db argument is the
     anchor — a real db value on the JVM, an opaque ref on the
     client (solidrpc.transit exchanges the two at the wire), or nil
-    for 'now'. Hold it at point of use: (sm/hold (all-notes< db)).
+    for no floor (the feed's head supplies the present). Hold it at
+    point of use: (sm/hold (all-notes< db)).
   - The facade is registered under its own symbol — the :cljs branch
     queries `all-notes<`, which the registry resolves to this same
     var, whose :clj branch produces the flow — so the two sides
@@ -46,11 +47,9 @@
 
 (defn all-notes<
   "Flow of every note, anchored at `db` (value / ref / nil). nil
-  means 'now' — this facade's convention, applied here; live passes
-  the anchor through untouched."
+  means no floor: the feed's head already supplies the present."
   [db]
-  #?(:clj  (live/live store/env (or db ((:db store/env)))
-                      all-notes :relevant? note-tx?)
+  #?(:clj  (live/live store/tx-reports< db all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))
 
 (defn add-note!

@@ -43,10 +43,16 @@
 ;; disconnects.
 (defonce tx-reports (m/stream (txl/tx-report-flow conn)))
 
-(def env
-  "The solidrpc.live env for this connection."
-  {:db      (fn [] (d/db conn))
-   :reports tx-reports})
+(def tx-reports<
+  "The feed, consumable: a catch-up head, then every report as it
+  lands. The head is the present — an event feed alone only announces
+  the next change, so a fresh subscriber would otherwise wait for the
+  next write. It reads the db at spawn (a flow is a recipe: every
+  subscriber gets its own read), which keeps it fresh by construction
+  — never older than any anchor minted on this connection — and it
+  carries no datoms: it is a sample, not news."
+  (m/ap (m/amb {:db-after (d/db conn) :tx-data []}
+               (m/?> tx-reports))))
 
 ;; ---------------------------------------------------------------------------
 ;; db-as-value ↔ wire ref, at the transit boundary

@@ -2,8 +2,7 @@
   "Browser twin of the real api/notes.cljc (inlined on the live-queries
   page): the same pure query, facade and commands, running the real
   solidrpc.live combinator against the stand-ins."
-  (:require [datomic.api :as d]
-            [server.notes :as store]
+  (:require [server.notes :as store]
             [solidrpc.live :as live]))
 
 (defn all-notes
@@ -16,15 +15,11 @@
   [{:keys [tx-data]}]
   (boolean (some (fn [[_ a _]] (= :note/text a)) tx-data)))
 
-(def ^:private env
-  {:db      (fn [] (d/db store/conn))
-   :reports store/tx-reports})
-
 (defn all-notes<
-  "Flow of every note, anchored at `db` (nil = now). Hold it at
-  point of use."
+  "Flow of every note, anchored at `db` (nil = no floor; the feed's
+  head supplies the present). Hold it at point of use."
   ([] (all-notes< nil))
-  ([db] (live/live env (or db (d/db store/conn)) all-notes
+  ([db] (live/live store/tx-reports< db all-notes
                    :relevant? note-tx?)))
 
 (defn add-note!

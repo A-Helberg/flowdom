@@ -12,6 +12,12 @@
 ;; ONE listener per connection, shared
 (defonce tx-reports (m/stream (txl/tx-report-flow conn)))
 
+(def tx-reports<
+  "The feed, consumable: a catch-up head — the db at spawn, no datoms
+  — then every report as it lands."
+  (m/ap (m/amb {:db-after (d/db conn) :tx-data []}
+               (m/?> tx-reports))))
+
 (defn add-note!
   "Returns the post-transaction db value."
   [text]

@@ -1,26 +1,29 @@
 (ns solidrpc.live-test
   "The live combinator against a fake store: an atom of history plays
   the database, a manually-driven m/observe plays the tx-report
-  stream. Everything emits synchronously on the test thread, so no
-  awaiting anywhere."
+  stream, and a last-report atom gives the feed its catch-up head —
+  the reports< contract. Everything emits synchronously on the test
+  thread, so no awaiting anywhere."
   (:require [clojure.test :refer [deftest is testing]]
             [missionary.core :as m]
             [solidrpc.live :as live]))
 
 (defn- fake-store
   "A tiny tx-report-shaped store: history is a vector of db values
-  (index = basis-t). transact! swaps the current db and emits a report
-  {:db-before … :db-after … :tx-data …} to the (single) subscriber."
+  (index = basis-t). transact! swaps the current db and emits a
+  report to the (single) live subscriber. :reports< is the contract
+  flow: a catch-up head — the current db at spawn, no datoms — then
+  every new report."
   []
   (let [history (atom [{:notes []}])
         emit*   (atom nil)]
     {:history   history
      :emit*     emit*
      :as-of     (fn [t] (nth @history t))
-     :env       {:db      (fn [] (peek @history))
-                 :reports (m/observe (fn [emit!]
-                                       (reset! emit* emit!)
-                                       (fn [] (reset! emit* nil))))}
+     :reports<  (m/ap (m/amb {:db-after (peek @history) :tx-data []}
+                             (m/?> (m/observe (fn [emit!]
+                                                (reset! emit* emit!)
+                                                (fn [] (reset! emit* nil)))))))
      :transact! (fn [update-fn tx-data]
                   (let [before (peek @history)
                         after  (update-fn before)]
@@ -42,50 +45,48 @@
 
 ;; ---------------------------------------------------------------------------
 
-(deftest anchor-at-now
-  (let [{:keys [env transact!]} (fake-store)
-        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) :notes))]
-    (is (= [[]] @out) "current answer at subscribe")
+(deftest head-is-the-present
+  ;; no anchor: the feed's head report supplies the current answer at
+  ;; subscribe, then reports drive it
+  (let [{:keys [reports< transact!]} (fake-store)
+        {:keys [out cancel]} (run-flow! (live/live reports< nil :notes))]
+    (is (= [[]] @out) "current answer at subscribe — from the head")
     (transact! #(add-note % "a") [[:note "a"]])
     (is (= [[] ["a"]] @out))
     (transact! #(add-note % "b") [[:note "b"]])
     (is (= [[] ["a"] ["a" "b"]] @out))
     (cancel)))
 
-(deftest nil-anchor-passes-through-untouched
-  ;; live is not slot-aware: the anchor is not inspected or coerced,
-  ;; nil included. Coercing nil to 'now' would read (:db env) a second
-  ;; time (substitute + catch-up); passthrough reads it exactly once.
-  ;; (The anchor emission itself is unobservable here — latest-wins
-  ;; supersedes it with the catch-up before a synchronous consumer
-  ;; transfers, same as the stale-anchor case above.) A facade whose
-  ;; convention is 'nil means now' substitutes before calling.
-  (let [{:keys [env]} (fake-store)
-        db-calls (atom 0)
-        env      (update env :db (fn [f] (fn [] (swap! db-calls inc) (f))))
-        {:keys [out cancel]} (run-flow! (live/live env nil :notes))]
-    (is (= 1 @db-calls) "only the catch-up read — no nil coercion")
-    (is (= [[]] @out) "the catch-up answer is what a consumer sees")
-    (cancel)))
+(deftest nil-anchor-means-no-floor
+  ;; nil is not coerced or passed to f — there is simply no floor
+  ;; emission; the head already supplies the present
+  (let [{:keys [reports< transact!]} (fake-store)
+        calls (atom 0)
+        notes-q (fn [db] (swap! calls inc) (:notes db))]
+    (transact! #(add-note % "a") [[:note "a"]])
+    (let [{:keys [out cancel]} (run-flow! (live/live reports< nil notes-q))]
+      (is (= [["a"]] @out) "one emission: the head's answer")
+      (is (= 1 @calls) "f ran once — never on nil")
+      (cancel))))
 
 (deftest fresh-anchor-emits-once
-  (let [{:keys [env as-of transact!]} (fake-store)]
+  (let [{:keys [reports< as-of transact!]} (fake-store)]
     (transact! #(add-note % "a") [[:note "a"]])
-    (let [{:keys [out cancel]} (run-flow! (live/live env (as-of 1) :notes))]
+    (let [{:keys [out cancel]} (run-flow! (live/live reports< (as-of 1) :notes))]
       (is (= [["a"]] @out)
-          "anchor == current: the catch-up dedupes away")
+          "anchor == current: the head dedupes away")
       (cancel))))
 
 (deftest stale-anchor-catches-up
-  (let [{:keys [env as-of transact!]} (fake-store)]
+  (let [{:keys [reports< as-of transact!]} (fake-store)]
     (transact! #(add-note % "a") [[:note "a"]])   ;; t1
     (let [anchor (as-of 1)]
       (transact! #(add-note % "b") [[:note "b"]]) ;; t2 — anchor now stale
-      (let [{:keys [out cancel]} (run-flow! (live/live env anchor :notes))]
+      (let [{:keys [out cancel]} (run-flow! (live/live reports< anchor :notes))]
         ;; the anchor is a LOWER BOUND, not an observable first frame:
-        ;; latest-wins (m/relieve) collapses anchor + catch-up before
-        ;; the first transfer, so the consumer sees the freshest
-        ;; answer directly — and never anything older than the anchor
+        ;; latest-wins (m/relieve) collapses anchor + head before the
+        ;; first transfer, so the consumer sees the freshest answer
+        ;; directly — and never anything older than the anchor
         (is (= [["a" "b"]] @out))
         (cancel)))))
 
@@ -101,12 +102,12 @@
       (is (= ["one"] (:notes (as-of 1)))))))
 
 (deftest live-dedupes-unchanged-answers
-  (let [{:keys [env transact!]} (fake-store)
+  (let [{:keys [reports< as-of transact!]} (fake-store)
         calls (atom 0)
         notes-q (fn [db] (swap! calls inc) (:notes db))
-        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) notes-q))]
+        {:keys [out cancel]} (run-flow! (live/live reports< (as-of 0) notes-q))]
     (is (= [[]] @out))
-    (is (= 1 @calls) "anchor + catch-up collapse to one db under latest-wins")
+    (is (= 1 @calls) "anchor + head collapse to one db under latest-wins")
     ;; a transaction that changes the db but NOT this query's answer
     (transact! #(assoc % :pings 1) [[:ping 1]])
     (is (= [[]] @out) "no emission — dedupe suppressed it")
@@ -116,11 +117,11 @@
     (cancel)))
 
 (deftest relevant?-skips-the-requery
-  (let [{:keys [env transact!]} (fake-store)
+  (let [{:keys [reports< transact!]} (fake-store)
         calls (atom 0)
         notes-q (fn [db] (swap! calls inc) (:notes db))
         note-tx? (fn [report] (some #(= :note (first %)) (:tx-data report)))
-        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) notes-q :relevant? note-tx?))]
+        {:keys [out cancel]} (run-flow! (live/live reports< nil notes-q :relevant? note-tx?))]
     (let [calls-at-start @calls]
       (transact! #(assoc % :pings 1) [[:ping 1]])
       (is (= calls-at-start @calls) "irrelevant tx: query not re-run at all")
@@ -130,13 +131,28 @@
       (is (= [[] ["a"]] @out)))
     (cancel)))
 
+(deftest the-head-is-exempt-from-relevant?
+  ;; catch-up is unconditional: a subscriber arriving right after an
+  ;; IRRELEVANT transaction must still reach the present, or a stale
+  ;; anchor would show until the next relevant write happens to land
+  (let [{:keys [reports< as-of transact!]} (fake-store)
+        note-tx? (fn [report] (some #(= :note (first %)) (:tx-data report)))]
+    (transact! #(add-note % "a") [[:note "a"]])   ;; t1
+    (transact! #(add-note % "b") [[:note "b"]])   ;; t2
+    (transact! #(assoc % :pings 1) [[:ping 1]])   ;; t3 — latest is irrelevant
+    (let [{:keys [out cancel]}
+          (run-flow! (live/live reports< (as-of 1) :notes :relevant? note-tx?))]
+      (is (= [["a" "b"]] @out)
+          "the head (no datoms — irrelevant by note-tx?) still carried the catch-up")
+      (cancel))))
+
 (deftest cancellation-releases-the-report-subscription
-  (let [{:keys [env emit*]} (fake-store)
-        {:keys [cancel]} (run-flow! (live/live env ((:db env)) :notes))]
+  (let [{:keys [reports< emit*]} (fake-store)
+        {:keys [cancel]} (run-flow! (live/live reports< nil :notes))]
     (is (some? @emit*) "live flow subscribed to reports")
     (cancel)
     (is (nil? @emit*) "cancel released the m/observe subscription")))
 
-(deftest missing-env-throws-eagerly
+(deftest missing-reports-flow-throws-eagerly
   (is (thrown? clojure.lang.ExceptionInfo
-               (live/live {:db (fn [] {})} nil identity))))
+               (live/live nil nil identity))))

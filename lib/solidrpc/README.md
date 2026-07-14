@@ -87,20 +87,21 @@ One consequence to design for: decode runs once per request, and an SSE connecti
 
 ### Anchors
 
-`live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the current db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. `live` passes the anchor to `f` exactly as given — nil included; a facade whose convention is "nil means now" substitutes the current db itself before calling.
+`live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the head report's db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. A non-nil anchor is passed to `f` exactly as given; nil means **no floor** — the head already supplies the present.
 
 **A fixed point in time needs no flow at all.** An as-of view is an immutable value, so "the answer at t" is plain function application: `(all-notes (d/as-of db t))`. Render against a fixed value and nothing ever updates — which is what SSR and JVM test fixtures consume.
 
-### The env
+### The reports< flow
 
-`live` is storage-agnostic — wire your store as two things:
+`live`'s store argument is one flow of tx-reports — maps with `:db-after` (+ whatever `:relevant?` inspects) — whose first emission carries the **current** db, immediately; the rest follow as they happen. The head is what lets a fresh subscriber see the present (an event feed only announces the next change), so `live` exempts it from `:relevant?`. A flow is a recipe, so the head is one db read per spawn:
 
 ```clojure
-{:db      (fn [] current-db-value)   ;; nil-anchor + catch-up reads
- :reports flow-of-tx-reports}        ;; maps with :db-after (+ whatever :relevant? inspects)
+(def tx-reports<
+  (m/ap (m/amb {:db-after (d/db conn) :tx-data []}   ;; the present, sampled at spawn
+               (m/?> tx-reports))))                   ;; then every change
 ```
 
-Share ONE running report flow per connection (`m/stream`) — Datomic's report queue semantics require it, and it gives the whole chain hold-style lazy/refcounted lifecycle.
+Read the db for the head rather than replaying the last report: a db read is current as of the last commit, never older than a same-connection anchor; a remembered report is only as fresh as the last one the lazy listener processed. Share ONE running report flow per connection (`m/stream`) — Datomic's report queue semantics require it, and it gives the whole chain hold-style lazy/refcounted lifecycle. The requirement under all of this is value semantics: reports must carry the new database as an immutable value — any epochal store qualifies (an atom, Datomic, XTDB).
 
 ### Efficiency
 
@@ -122,9 +123,8 @@ The api namespace colocates the pure fn with its `<`-suffixed facade, registered
 #?(:clj
    (defn all-notes [db] ...))          ;; pure — call it with any as-of view
 
-(defn all-notes< [db]                  ;; < says flow; db is the anchor
-  #?(:clj  (live/live store/env (or db ((:db store/env)))   ;; facade convention: nil means now
-                      all-notes :relevant? note-tx?)
+(defn all-notes< [db]                  ;; < says flow; db is the anchor (nil = no floor)
+  #?(:clj  (live/live store/tx-reports< db all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))
 ```
 
