@@ -541,8 +541,8 @@
         "the " [:code ":cljs"] " branch delegates to solidrpc. Both "
         "sides just call " [:code "(chat/messages)"] " — the rpc "
         "plumbing lives in one file."]
-       [:p [:strong "One honest caveat:"] " this site is static — "
-        "there is no server. " [:code "frontend.chat"] "'s cljs "
+       [:p "This site is static — there is no server. "
+        [:code "frontend.chat"] "'s cljs "
         "branch talks to a stand-in with the real query/command "
         "signatures: the same atom-backed model, with a sleep "
         "playing the network. What the fake skips is only the "
@@ -583,10 +583,9 @@
         [:code "sm/hold"] "'s lifecycle: the queue attaches when the "
         "first subscriber arrives and detaches when the last one "
         "leaves. The demo below is just the feed: press the buttons "
-        "and watch reports land. The next page turns this feed into "
-        "a live query, by hand."]
-       [:p [:strong "The honest caveat again:"] " no JVM on this "
-        "static site. The demo below runs the same pipeline against a "
+        "and watch reports land."]
+       [:p "No JVM on this static site. "
+        "The demo below runs the same pipeline against a "
         "browser stand-in — a map plays the database, an atom watch "
         "plays the queue. The real thing, including the manifold "
         "bridge that serves it over solidrpc, is in the two server "
@@ -632,8 +631,8 @@
         "are immutable, 'the answer at t' needs no flow at all — "
         [:code "(all-notes (fd/as-of t))"] " is a plain function "
         "call, frozen forever. This composition is the standard "
-        "shape for every read endpoint, which is exactly why you "
-        "shouldn't have to write it by hand every time — next page."]]
+        "shape for every read endpoint — which is exactly why you "
+        "shouldn't have to write it by hand every time."]]
       :examples
       [{:source    (rc/inline "frontend/examples/live_by_hand.cljs")
         :component live-by-hand/example}]}
@@ -684,8 +683,7 @@
         "treat that as 'now') and take whatever arrives. Queries on "
         "one page get no common starting point, a command can't hand "
         "back the database that contains its write, and there is no "
-        "way to tell a test or an SSR render 'this exact state'. The "
-        "next page fixes that."]
+        "way to tell a test or an SSR render 'this exact state'."]
        [:p "The pattern adds one file to your app:"]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
@@ -837,8 +835,8 @@
         "ref is usually a re-observation of answers the client was "
         "already served; and data that must not be readable at "
         [:em "any"] " t is excision's job."]
-       [:p [:strong "The honest caveat:"] " no server on this static "
-        "site, so no live demo. Both value types are real in the "
+       [:p "No server on this static site, so no live demo. "
+        "Both value types are real in the "
         "example app (api.server-info, api.viewer, mounted in "
         "server.core) with JVM tests that drive the mount handler "
         "with fake requests — run " [:code "task test-jvm"] ", or run "
