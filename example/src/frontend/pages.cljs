@@ -652,6 +652,16 @@
         "ref is usually just a re-observation of answers the client "
         "was already served, and data that must not be readable at "
         [:em "any"] " t is excision's job."]
+       [:p "The db is the simple case: its resolver needs only the "
+        "conn, closed over at startup, so it lives in the transit "
+        "registry. Value types that need the " [:em "request"] " to "
+        "reconstruct — a current user from a session, however "
+        "sessions work in your app — get their handlers where you "
+        "mount the rpc handlers, as "
+        [:code "(rpc/handle-query req {:read-handlers …})"] ": the "
+        "router fn has the request in scope, so the decoder is a "
+        "plain closure over it. The solidrpc README covers the "
+        "mechanism."]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
         "server runs — against the previous page's browser stand-in, "
