@@ -22,9 +22,10 @@
 
 (defn all-notes<
   "Flow of every note, anchored at `db` (a value here — the fake's dbs
-  are plain maps — or nil for 'now'). Hold it at point of use."
+  are plain maps — or nil, which this facade treats as 'now'). Hold
+  it at point of use."
   [db]
-  (live/live fd/env db all-notes :relevant? note-tx?))
+  (live/live fd/env (or db (fd/db)) all-notes :relevant? note-tx?))
 
 (defn add-note!
   "Command."

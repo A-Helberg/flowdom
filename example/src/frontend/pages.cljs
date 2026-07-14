@@ -617,8 +617,11 @@
         "back into a database value (as-of) on the way in. The "
         "exchange happens at the serialization boundary: server code "
         "sees databases, the client holds an opaque " [:code "DbRef"]
-        " token it passes around like any value, and " [:code "nil"]
-        " means 'now'."]
+        " token it passes around like any value. This app's facades "
+        "treat a " [:code "nil"] " db as 'now' — their convention, "
+        "applied in " [:code "api.notes"] ", not the library's: "
+        "nothing in the transport or in " [:code "live"] " interprets "
+        "nil."]
        [:p [:code "solidrpc.live/live"] " lifts a pure query fn into "
         "a flow " [:em "anchored"] " at the db you hand it — a lower "
         "bound: the flow catches up to the present immediately and "

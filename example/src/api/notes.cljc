@@ -45,9 +45,12 @@
      (boolean (some #(contains? note-attrs (d/ident db-after (:a %))) tx-data))))
 
 (defn all-notes<
-  "Flow of every note, anchored at `db` (value / DbRef / nil = now)."
+  "Flow of every note, anchored at `db` (value / DbRef / nil). nil
+  means 'now' — this facade's convention, applied here; live passes
+  the anchor through untouched."
   [db]
-  #?(:clj  (live/live store/env db all-notes :relevant? note-tx?)
+  #?(:clj  (live/live store/env (or db ((:db store/env)))
+                      all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))
 
 (defn add-note!
