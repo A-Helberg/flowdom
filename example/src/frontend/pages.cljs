@@ -728,10 +728,12 @@
        [:p "Concretely, a value type is a tag, a marker, a facade, "
         "and one handler where you mount the rpc handlers. The "
         "handler contract: " [:code ":read-handlers"] " maps a tag "
-        "to " [:code "(fn [rep] value)"] " — it runs while the "
-        "incoming args decode, receives the ref's rep (a bare marker "
-        "carries " [:code "{}"] ", which is why the fns below ignore "
-        "it), and whatever it returns " [:em "becomes the argument"]
+        "to " [:code "(fn [on-the-wire-value] value)"] " — it runs "
+        "while the incoming args decode, receives what the ref "
+        "carried over the wire (transit calls this the rep; a bare "
+        "marker carries " [:code "{}"] ", which is why the fns below "
+        "ignore it), and whatever it returns "
+        [:em "becomes the argument"]
         " the endpoint fn receives. The canonical value type here is "
         "the current user, but solidrpc ships no auth system, so the "
         "example uses two stand-ins chosen to show the two closure "
@@ -756,12 +758,12 @@
   (rpc/handle-query req
     {:read-handlers
      {tag                                     ;; closes over startup state
-      (fn [_rep] {:started-at started-at
-                  :uptime-ms  (- (System/currentTimeMillis) started-at)})
+      (fn [_wire-value] {:started-at started-at
+                         :uptime-ms  (- (System/currentTimeMillis) started-at)})
 
       api.viewer/tag                          ;; closes over THIS request
-      (fn [_rep] {:remote-addr (:remote-addr req)
-                  :user-agent  (get-in req [:headers \"user-agent\"])})}}))
+      (fn [_wire-value] {:remote-addr (:remote-addr req)
+                         :user-agent  (get-in req [:headers \"user-agent\"])})}}))
 
 ;; in a view (cljs), a read like any other — hold it at point of use
 (let [info< (sm/hold (server-info< (server-info-ref)) :initial nil)]
