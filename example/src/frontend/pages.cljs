@@ -707,16 +707,21 @@
         " writes under its own tag, and unknown incoming tags read "
         "back as refs."]
        [:p "Everything a value type needs is a tag, a marker, a "
-        "facade, and one handler at the mount. Below, two value "
-        "types chosen so the contrast is the closure and nothing "
-        "else: server-info reconstructs from a closure made at "
-        [:em "startup"] " (the start instant, with uptime computed "
-        "fresh per request); the viewer reconstructs from a closure "
-        "over the " [:em "request"] " — the only identity a bare "
-        "request has. Same marker shape, same facade shape, same "
-        "wire. The viewer is deliberately not an authentication "
-        "system; your session lookup goes in that same closure, and "
-        "nothing about the shape changes."]
+        "facade, and one handler at the mount. The handler contract: "
+        [:code ":read-handlers"] " maps a tag to "
+        [:code "(fn [rep] value)"] " — it runs while the incoming "
+        "args decode, receives the ref's rep (a bare marker carries "
+        [:code "{}"] ", which is why the fns below ignore it), and "
+        "whatever it returns " [:em "becomes the argument"] " the "
+        "endpoint fn receives. Below, two value types chosen so the "
+        "contrast is the closure and nothing else: server-info "
+        "reconstructs from a closure made at " [:em "startup"]
+        " (the start instant, with uptime computed fresh per "
+        "request); the viewer reconstructs from a closure over the "
+        [:em "request"] " — the only identity a bare request has. "
+        "The viewer is deliberately not an authentication system; "
+        "your session lookup goes in that same closure, and nothing "
+        "about the shape changes."]
        [ui/code-block
         ";; the value type: a tag, a marker, a facade — one cljc file
 (def tag \"app/server-info\")
@@ -739,7 +744,19 @@
 
       api.viewer/tag                          ;; closes over THIS request
       (fn [_rep] {:remote-addr (:remote-addr req)
-                  :user-agent  (get-in req [:headers \"user-agent\"])})}}))"]
+                  :user-agent  (get-in req [:headers \"user-agent\"])})}}))
+
+;; in a view (cljs), a read like any other — hold it at point of use
+(let [info< (sm/hold (server-info< (server-info-ref)) :initial nil)]
+  [:p \"up \" (fn [] (some-> @info< :uptime-ms)) \" ms\"])
+
+;; the round trip:
+;;   view      (server-info-ref)          a marker, plain data
+;;   wire out  [\"~#app/server-info\",[\"^ \"]]
+;;   decode    the read handler for the tag runs; its return value
+;;             becomes the argument server-info< receives
+;;   endpoint  (server-info< {:started-at … :uptime-ms …})
+;;   wire in   plain data — the hold updates, the thunk re-runs"]
        [:p "Two conventions complete the picture. A handler that "
         "rejects — no session, expired token — throws "
         [:code "(ex-info \"no session\" {:solidrpc/status 401})"]

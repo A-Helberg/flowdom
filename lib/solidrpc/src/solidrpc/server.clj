@@ -60,8 +60,10 @@
    Opts (supply them where you mount the handler — your router fn has
    the request in scope, so request-dependent handlers are plain
    closures over it):
-     :read-handlers   {tag (fn [rep] …)} — per-request transit read
-                      handlers for the incoming args
+     :read-handlers   {tag (fn [rep] …)} — runs while the incoming
+                      args decode; the return value becomes the
+                      argument the endpoint fn receives in place of
+                      the ref
      :write-handlers  {type {:tag … :rep …}} — per-request transit
                       write handlers for the outgoing stream"
   ([req] (handle-query req nil))

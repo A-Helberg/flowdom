@@ -67,7 +67,7 @@ The server does not restrict which t a client may name. The trust boundary is th
 
 ### Handlers at the mount point
 
-Everything above is handed to solidrpc where you mount the handlers. Your router fn has the request in scope, so a value type that can only be reconstructed *with the request* — a current user from a session, whatever the session mechanism is — is a handler closing over it, sitting in the same map as the startup-scoped ones. The mount point becomes the app's whole value vocabulary, per request, and solidrpc never learns whether reconstruction means a JWT, a server-side session store, or a db lookup:
+Everything above is handed to solidrpc where you mount the handlers. Your router fn has the request in scope, so a value type that can only be reconstructed *with the request* — a current user from a session, whatever the session mechanism is — is a handler closing over it, sitting in the same map as the startup-scoped ones. A read handler runs while the incoming args decode, and its return value becomes the argument the endpoint fn receives in place of the ref. The mount point becomes the app's whole value vocabulary, per request, and solidrpc never learns whether reconstruction means a JWT, a server-side session store, or a db lookup:
 
 ```clojure
 ["/api/query"
