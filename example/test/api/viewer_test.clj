@@ -10,21 +10,17 @@
             [server.core :as core]
             [solidrpc.transit :as transit]))
 
-(def ^:private ref-out
-  ;; the client role: on cljs the registry writes ViewerRef; here the
-  ;; test supplies the same handler per call
-  {api.viewer.ViewerRef {:tag viewer/tag :rep (fn [_] {})}})
-
 (defn- first-data [resp]
   (let [frame @(s/take! (:body resp))]
     (transit/read (second (re-find #"data: (.*)\n" frame)))))
 
 (deftest whoami-reconstructs-the-viewer-from-the-request
+  ;; the client role needs no handlers: the marker is a generic ref,
+  ;; written by the built-in Ref handler
   (let [req  {:remote-addr "10.1.2.3"
               :headers     {"user-agent" "kaocha"}
               :query-params {"q" (transit/write {:fn-name 'api.viewer/whoami<
-                                                 :args    [(viewer/->ViewerRef)]}
-                                                {:handlers ref-out})}}
+                                                 :args    [(viewer/viewer-ref)]})}}
         resp (core/query-handler req)]
     (is (= 200 (:status resp)))
     (is (= {:remote-addr "10.1.2.3" :user-agent "kaocha"} (first-data resp))

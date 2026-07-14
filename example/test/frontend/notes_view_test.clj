@@ -92,14 +92,17 @@
         (is (some #{after-anchor} names) "caught up past the anchor")))))
 
 (deftest db-value-round-trips-the-wire-as-a-ref
-  ;; the transit boundary: value → #solid/db {:basis-t t} → value.
-  ;; server.notes registered the handlers; this exercises them with a
-  ;; real Datomic db value.
+  ;; the transit boundary: value → #solid/db {:basis-t t} → value,
+  ;; using the same handler maps server.core supplies at the mount
+  ;; point — with a real Datomic db value.
   (let [db0  (d/db store/conn)
-        wire (transit/write db0)]
+        wire (transit/write db0 {:handlers (:write-handlers store/transit-handlers)})]
     (is (re-find #"solid/db" wire))
     (is (not (re-find #"hello from datomic" wire)) "no domain data crosses")
-    (let [restored (transit/read wire)]
+    (testing "without a resolver, the client's view: a generic ref"
+      (is (= (transit/ref transit/db-tag {:basis-t (d/basis-t db0)})
+             (transit/read wire))))
+    (let [restored (transit/read wire {:handlers (:read-handlers store/transit-handlers)})]
       (is (= (d/basis-t db0) (d/basis-t restored)))
       (is (= (notes/all-notes db0) (notes/all-notes restored))
           "the resolved value answers queries identically"))))

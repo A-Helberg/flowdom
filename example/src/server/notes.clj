@@ -49,20 +49,18 @@
 ;; db-as-value ↔ wire ref, at the transit boundary
 ;; ---------------------------------------------------------------------------
 
-(defonce ^:private transit-handlers
-  (do
-    ;; out: a db value's wire form is its basis-t — nothing else crosses
-    (transit/register-write-handler! datomic.db.Db transit/db-tag
-                                     (fn [db] {:basis-t (d/basis-t db)}))
-    ;; in: the ref becomes an actual db value again. No clamping — the
-    ;; trust boundary is the query fn (authorize against the present,
-    ;; read domain data at t), and data that must not be readable at
-    ;; ANY t is excision's job.
-    (transit/register-read-handler! transit/db-tag
-                                    (fn [{:keys [basis-t]}]
-                                      (let [db (d/db conn)]
-                                        (cond-> db basis-t (d/as-of basis-t)))))
-    :registered))
+(def transit-handlers
+  "The db half of the app's value vocabulary, as data — server.core
+  merges this into the opts at the rpc mount point. Out: a db value's
+  wire form is its basis-t, nothing else crosses. In: the ref becomes
+  an actual db value again. No clamping — the trust boundary is the
+  query fn (authorize against the present, read domain data at t),
+  and data that must not be readable at ANY t is excision's job."
+  {:read-handlers  {transit/db-tag (fn [{:keys [basis-t]}]
+                                     (let [db (d/db conn)]
+                                       (cond-> db basis-t (d/as-of basis-t))))}
+   :write-handlers {datomic.db.Db {:tag transit/db-tag
+                                   :rep (fn [db] {:basis-t (d/basis-t db)})}}})
 
 ;; ---------------------------------------------------------------------------
 ;; Storage commands

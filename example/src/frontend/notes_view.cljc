@@ -18,7 +18,7 @@
      :clj  e))
 
 (defn notes-view
-  "Pure function of a db anchor: a value on the JVM, a DbRef on the
+  "Pure function of a db anchor: a value on the JVM, a ref on the
   client, nil for 'now'."
   [db]
   (let [notes< (sm/hold (notes/all-notes< db) :initial [])

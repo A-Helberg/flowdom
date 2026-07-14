@@ -6,7 +6,7 @@
     with any as-of view: (all-notes (d/as-of db t)) is 'the answer
     at t', no flow required.
   - `all-notes<` lifts it: the `<` says flow. Its db argument is the
-    anchor — a real db value on the JVM, an opaque DbRef token on the
+    anchor — a real db value on the JVM, an opaque ref on the
     client (solidrpc.transit exchanges the two at the wire), or nil
     for 'now'. Hold it at point of use: (sm/hold (all-notes< db)).
   - The facade is registered under its own symbol — the :cljs branch
@@ -45,7 +45,7 @@
      (boolean (some #(contains? note-attrs (d/ident db-after (:a %))) tx-data))))
 
 (defn all-notes<
-  "Flow of every note, anchored at `db` (value / DbRef / nil). nil
+  "Flow of every note, anchored at `db` (value / ref / nil). nil
   means 'now' — this facade's convention, applied here; live passes
   the anchor through untouched."
   [db]

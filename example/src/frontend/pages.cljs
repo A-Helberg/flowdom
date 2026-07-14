@@ -38,8 +38,8 @@
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-notes :as live-notes]
             ;; compiled into the app (not just inlined as source) so
-            ;; the ViewerRef write handler is registered when running
-            ;; full-stack — the request-values page says to try it
+            ;; the request-values page's try-it-from-the-console
+            ;; instruction works when running full-stack
             [api.viewer]))
 
 (def sections
@@ -620,8 +620,8 @@
         [:code "#solid/db {:basis-t 1010}"] " — and deserializes it "
         "back into a database value (as-of) on the way in. The "
         "exchange happens at the serialization boundary: server code "
-        "sees databases, the client holds an opaque " [:code "DbRef"]
-        " token it passes around like any value. This app's facades "
+        "sees databases, the client holds an opaque generic "
+        [:code "Ref"] " it passes around like any value. This app's facades "
         "treat a " [:code "nil"] " db as 'now' — their convention, "
         "applied in " [:code "api.notes"] ", not the library's: "
         "nothing in the transport or in " [:code "live"] " interprets "
@@ -657,11 +657,11 @@
         "was already served, and data that must not be readable at "
         [:em "any"] " t is excision's job."]
        [:p "The db is the simple case: its resolver needs only the "
-        "conn, closed over at startup, so it lives in the transit "
-        "registry. Value types that need the " [:em "request"] " to "
-        "reconstruct — a current user from a session — get their "
-        "handlers where you mount the rpc handlers. The next page "
-        "shows that wired."]
+        "conn, so its handlers are built once, closing over it. "
+        "Value types that need the " [:em "request"] " to reconstruct "
+        "— a current user from a session — differ only in what their "
+        "closure captures. Both kinds are supplied together where you "
+        "mount the rpc handlers; the next page shows that wired."]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
         "server runs — against the previous page's browser stand-in, "
@@ -692,19 +692,22 @@
       :title "Request-scoped values"
       :prose
       [:<>
-       [:p "The previous page's db values reconstruct from startup "
-        "context alone — the resolver closes over the conn, so it "
-        "lives in the transit registry. Some values only exist "
-        "relative to a " [:em "request"] ": the canonical one is the "
-        "current user, sitting in a session however your app does "
-        "sessions. Those handlers are supplied where you mount the "
-        "rpc handlers — your router fn has the request in scope, so "
-        "the decoder is a plain closure over it, and solidrpc never "
-        "learns whether reconstruction means a session-store lookup, "
-        "a JWT verification, or a db read."]
+       [:p "There is one handler mechanism: every value type the "
+        "wire speaks is supplied as opts where you mount the rpc "
+        "handlers. The db handlers close over the conn and are built "
+        "once (see server.notes); a value that only exists relative "
+        "to a " [:em "request"] " — the canonical one is the current "
+        "user, sitting in a session however your app does sessions — "
+        "closes over the request instead, because your router fn has "
+        "it in scope right there. solidrpc never learns whether "
+        "reconstruction means a session-store lookup, a JWT "
+        "verification, or a db read. And the client configures "
+        "nothing: refs are generic — a " [:code "transit/ref"]
+        " writes under its own tag, and unknown incoming tags read "
+        "back as refs."]
        [:p "This example wires the mechanism end to end with the "
         "only identity a bare request has: the client passes an "
-        [:code "api.viewer/ViewerRef"] " marker, and the read handler "
+        [:code "(api.viewer/viewer-ref)"] " marker, and the read handler "
         "in " [:code "server.core"] " turns it into "
         "{:remote-addr … :user-agent …} — a value only the request "
         "could supply. It is deliberately not an authentication "
@@ -724,7 +727,7 @@
         "site, so no live demo. The JVM test below drives the real "
         "mount handler with a fake request — run it with "
         [:code "task test-jvm"] ", or run the app full-stack and "
-        "call " [:code "(whoami< (->ViewerRef))"] " from the browser."]
+        "call " [:code "(whoami< (viewer-ref))"] " from the browser."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The value type (api.viewer)"]

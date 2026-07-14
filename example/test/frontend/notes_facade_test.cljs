@@ -31,6 +31,6 @@
     (is (= :div (first hiccup)))))
 
 (deftest viewer-facade-is-a-lazy-flow-over-a-marker-ref
-  ;; the ViewerRef is client-constructable plain data; the flow is a
-  ;; recipe — no connection until something subscribes
-  (is (fn? (viewer/whoami< (viewer/->ViewerRef)))))
+  ;; the marker is a generic ref — plain data, no registration; the
+  ;; flow is a recipe — no connection until something subscribes
+  (is (fn? (viewer/whoami< (viewer/viewer-ref)))))
