@@ -733,11 +733,11 @@
 (defn query-handler [req]
   (rpc/handle-query req
     {:read-handlers
-     {\"app/server-info\"                     ;; closes over startup state
+     {tag                                     ;; closes over startup state
       (fn [_rep] {:started-at started-at
                   :uptime-ms  (- (System/currentTimeMillis) started-at)})
 
-      \"app/viewer\"                          ;; closes over THIS request
+      api.viewer/tag                          ;; closes over THIS request
       (fn [_rep] {:remote-addr (:remote-addr req)
                   :user-agent  (get-in req [:headers \"user-agent\"])})}}))"]
        [:p "Two conventions complete the picture. A handler that "
