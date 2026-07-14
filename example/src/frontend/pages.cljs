@@ -706,19 +706,40 @@
         "nothing: refs are generic — a " [:code "transit/ref"]
         " writes under its own tag, and unknown incoming tags read "
         "back as refs."]
-       [:p "This example wires two value types end to end, chosen so "
-        "the contrast is the closure and nothing else. "
-        [:code "(api.server-info/server-info-ref)"] " reconstructs "
-        "from a closure made at " [:em "startup"] " — the server's "
-        "start instant, with uptime computed fresh per request. "
-        [:code "(api.viewer/viewer-ref)"] " reconstructs from a "
-        "closure over the " [:em "request"] " — the only identity a "
-        "bare request has, {:remote-addr … :user-agent …}. Same "
-        "marker shape, same facade shape, same wire; look at "
-        [:code "server.core"] " below and the two handlers differ "
-        "only in what they capture. The viewer is deliberately not an "
-        "authentication system; your session lookup goes in that same "
-        "closure, and nothing about the shape changes."]
+       [:p "Everything a value type needs is a tag, a marker, a "
+        "facade, and one handler at the mount. Below, two value "
+        "types chosen so the contrast is the closure and nothing "
+        "else: server-info reconstructs from a closure made at "
+        [:em "startup"] " (the start instant, with uptime computed "
+        "fresh per request); the viewer reconstructs from a closure "
+        "over the " [:em "request"] " — the only identity a bare "
+        "request has. Same marker shape, same facade shape, same "
+        "wire. The viewer is deliberately not an authentication "
+        "system; your session lookup goes in that same closure, and "
+        "nothing about the shape changes."]
+       [ui/code-block
+        ";; the value type: a tag, a marker, a facade — one cljc file
+(def tag \"app/server-info\")
+
+(defn server-info-ref [] (transit/ref tag))
+
+(defn server-info< [info]
+  #?(:clj  (m/ap info)                       ;; in-process: info IS the value
+     :cljs (call/query `server-info< info))) ;; wire: info is the marker ref
+
+;; the mount point: your router fn has the request in scope
+(def started-at (System/currentTimeMillis))
+
+(defn query-handler [req]
+  (rpc/handle-query req
+    {:read-handlers
+     {\"app/server-info\"                     ;; closes over startup state
+      (fn [_rep] {:started-at started-at
+                  :uptime-ms  (- (System/currentTimeMillis) started-at)})
+
+      \"app/viewer\"                          ;; closes over THIS request
+      (fn [_rep] {:remote-addr (:remote-addr req)
+                  :user-agent  (get-in req [:headers \"user-agent\"])})}}))"]
        [:p "Two conventions complete the picture. A handler that "
         "rejects — no session, expired token — throws "
         [:code "(ex-info \"no session\" {:solidrpc/status 401})"]
@@ -730,28 +751,13 @@
         "query fn — then open streams tighten on the transaction "
         "that revokes, not at reconnect."]
        [:p [:strong "The honest caveat:"] " no server on this static "
-        "site, so no live demo. The JVM tests below drive the real "
-        "mount handler with fake requests — run them with "
-        [:code "task test-jvm"] ", or run the app full-stack and "
-        "call " [:code "(whoami< (viewer-ref))"] " or "
-        [:code "(server-info< (server-info-ref))"] " from the browser."]
-       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The startup-scoped value (api.server-info)"]
-        [ui/code-block (rc/inline "api/server_info.cljc")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The request-scoped value (api.viewer)"]
-        [ui/code-block (rc/inline "api/viewer.cljc")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The mount point (server.core)"]
-        [ui/code-block (rc/inline "server/core.clj")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The tests (api.viewer-test, api.server-info-test)"]
-        [ui/code-block (rc/inline "api/viewer_test.clj")]
-        [ui/code-block (rc/inline "api/server_info_test.clj")]]]}]}
+        "site, so no live demo. Both value types are real in the "
+        "example app (api.server-info, api.viewer, mounted in "
+        "server.core) with JVM tests that drive the mount handler "
+        "with fake requests — run " [:code "task test-jvm"] ", or run "
+        "the app full-stack and call "
+        [:code "(whoami< (viewer-ref))"] " or "
+        [:code "(server-info< (server-info-ref))"] " from the browser."]]}]}
 
    {:title "Testing"
     :pages
