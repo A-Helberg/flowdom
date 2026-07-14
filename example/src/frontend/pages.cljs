@@ -693,35 +693,52 @@
       :title "Server values"
       :prose
       [:<>
-       [:p "There is one handler mechanism: every value type the "
-        "wire speaks is supplied as opts where you mount the rpc "
-        "handlers. The db handlers close over the conn and are built "
-        "once (see server.notes); a value that only exists relative "
-        "to a " [:em "request"] " — the canonical one is the current "
-        "user, sitting in a session however your app does sessions — "
-        "closes over the request instead, because your router fn has "
-        "it in scope right there. solidrpc never learns whether "
-        "reconstruction means a session-store lookup, a JWT "
-        "verification, or a db read. And the client configures "
-        "nothing: refs are generic — a " [:code "transit/ref"]
-        " writes under its own tag, and unknown incoming tags read "
-        "back as refs."]
-       [:p "Everything a value type needs is a tag, a marker, a "
-        "facade, and one handler at the mount. The handler contract: "
-        [:code ":read-handlers"] " maps a tag to "
-        [:code "(fn [rep] value)"] " — it runs while the incoming "
-        "args decode, receives the ref's rep (a bare marker carries "
-        [:code "{}"] ", which is why the fns below ignore it), and "
-        "whatever it returns " [:em "becomes the argument"] " the "
-        "endpoint fn receives. Below, two value types chosen so the "
-        "contrast is the closure and nothing else: server-info "
-        "reconstructs from a closure made at " [:em "startup"]
-        " (the start instant, with uptime computed fresh per "
-        "request); the viewer reconstructs from a closure over the "
-        [:em "request"] " — the only identity a bare request has. "
-        "The viewer is deliberately not an authentication system; "
-        "your session lookup goes in that same closure, and nothing "
-        "about the shape changes."]
+       [:p "The previous page made reads pure: " [:code "all-notes"]
+        " is a function of a database value it receives as an "
+        "argument. Push that one step further and you hit a wall. A "
+        "query that depends on who is asking wants the same shape — "
+        [:code "(visible-notes db user)"] ", a function of the user, "
+        "not of a session lurking somewhere — because arguments are "
+        "what made these fns testable: hand them values, no "
+        "machinery. But the user, like the db, is a value that only "
+        "exists " [:em "on the server"] ". So what does the client "
+        "pass?"]
+       [:p "The two obvious answers both give something up. Shipping "
+        "the value doesn't work: the db is too big, and a "
+        "client-supplied user is an authentication bypass — the "
+        "client must not be able to assert who it is. Making it "
+        "ambient — endpoints reaching into a session, a dynamic var, "
+        "a global — works, and is what most apps do, but it puts a "
+        "hidden input back into every fn you just made pure: tests "
+        "need the machinery again, and the fn's signature stops "
+        "telling the truth."]
+       [:p "The way out is the move the db already made on the "
+        "previous page, generalized: the client doesn't need the "
+        "value — components never look inside it, they only pass it "
+        "to reads. So the client passes a " [:em "name"] " for it — "
+        "a ref, plain data — and at the serialization boundary the "
+        "server exchanges the name for the real value. The endpoint "
+        "fn receives an ordinary argument and stays pure: the same "
+        "fn is called with a real value in-process (JVM tests "
+        "construct a user map, no auth machinery anywhere) and "
+        "reconstructs one at the wire. And because reconstruction "
+        "happens server-side — from your session store, a JWT, a db "
+        "read; solidrpc never knows — the client can't forge what it "
+        "never builds. A marker ref carries nothing at all."]
+       [:p "Concretely, a value type is a tag, a marker, a facade, "
+        "and one handler where you mount the rpc handlers. The "
+        "handler contract: " [:code ":read-handlers"] " maps a tag "
+        "to " [:code "(fn [rep] value)"] " — it runs while the "
+        "incoming args decode, receives the ref's rep (a bare marker "
+        "carries " [:code "{}"] ", which is why the fns below ignore "
+        "it), and whatever it returns " [:em "becomes the argument"]
+        " the endpoint fn receives. The canonical value type here is "
+        "the current user, but solidrpc ships no auth system, so the "
+        "example uses two stand-ins chosen to show the two closure "
+        "lifetimes: server-info reconstructs from a closure made at "
+        [:em "startup"] ", the viewer from a closure over the "
+        [:em "request"] " — which is exactly where your session "
+        "lookup goes, with nothing about the shape changing."]
        [ui/code-block
         ";; the value type: a tag, a marker, a facade — one cljc file
 (def tag \"app/server-info\")
