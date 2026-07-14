@@ -535,28 +535,32 @@
         "promise, and on the server a command is a "
         [:code "swap!"] "."]
        [:p "Components never write " [:code "rpc/query"] " at call "
-        "sites, though. The intended shape is a " [:code ".cljc"]
-        " api namespace per domain: the " [:code ":clj"] " branch is "
-        "the real implementation, registered under the same symbol; "
-        "the " [:code ":cljs"] " branch delegates to solidrpc. Both "
-        "sides just call " [:code "(chat/messages)"] " — the rpc "
-        "plumbing lives in one file."]
-       [:p "This site is static — there is no server, on this page "
-        "or any that follows. Demo code in this section is written "
-        "exactly as it would be in a real application; what makes it "
-        "runnable here is stand-ins behind the same names — on later "
-        "pages even " [:code "datomic.api"] " resolves to one with "
-        "the real API. The server code shown in collapsed blocks is "
-        "the real thing. That's the disclaimer, once — the pages "
-        "ahead won't repeat it."]
-       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The api namespace (frontend.chat)"]
-        [ui/code-block (rc/inline "frontend/chat.cljs")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The fake server (frontend.fake-rpc)"]
-        [ui/code-block (rc/inline "frontend/fake_rpc.cljs")]]]
+        "sites, though. The shape is a " [:code ".cljc"]
+        " api namespace per domain — the " [:code ":clj"] " branch is "
+        "the real implementation, the " [:code ":cljs"] " branch "
+        "delegates to solidrpc, and the var is registered under its "
+        "own symbol, so both sides call " [:code "(chat/messages)"]
+        " and the rpc plumbing lives in one file:"]
+       [ui/code-block
+        "(ns api.chat
+  (:require #?(:clj  [server.chat :as impl]
+               :cljs [solidrpc.call.solidjs :as rpc])))
+
+(defn messages []
+  #?(:clj  (impl/messages-flow)
+     :cljs (rpc/query `messages)))
+
+(defn send! [text]
+  #?(:clj  (impl/send! text)
+     :cljs (rpc/command `send! text)))
+
+;; server startup:
+;; (solidrpc.registry/register! #'api.chat/messages)
+;; (solidrpc.registry/register! #'api.chat/send!)"]
+       [:p "This site is static — there is no server. The demos run "
+        "on browser stand-ins behind the real names (on later pages "
+        "even " [:code "datomic.api"] " resolves to one), and the "
+        "server sources in collapsed blocks are the real code."]]
       :examples
       [{:title     "A query and a command"
         :source    (rc/inline "frontend/examples/rpc_chat.cljs")
