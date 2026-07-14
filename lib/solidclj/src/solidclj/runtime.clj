@@ -60,6 +60,22 @@
 
 (def ^:private max-depth 256)
 
+(def ^:private ^:dynamic *deferred*
+  "Inside a reactive turn: an atom collecting thunks to run when the
+  OUTERMOST computation of the turn finishes. nil outside."
+  nil)
+
+(defn defer!
+  "Run `f` after the current synchronous reactive turn (the JVM analog
+  of a microtask relative to Solid's synchronous updates). Outside a
+  turn, runs immediately. Lets a release/resubscribe pair within one
+  computation re-run cancel out instead of tearing shared state down
+  and back up — solidclj.missionary's hold refcount depends on this."
+  [f]
+  (if (some? *deferred*)
+    (do (swap! *deferred* conj f) nil)
+    (f)))
+
 ;; ---- Owner / computation nodes ------------------------------------------------
 ;; A node is an atom:
 ;;   {:node/type :owner
@@ -106,17 +122,27 @@
     (swap! node assoc :disposed? true)
     (clean-node! node)))
 
+(defn- run-computation* [node]
+  (clean-node! node)
+  (binding [*owner*    node
+            *listener* node
+            *depth*    (inc *depth*)]
+    ((:fn @node))))
+
 (defn- run-computation! [node]
   (when-not (:disposed? @node)
     (when (> *depth* max-depth)
       (throw (ex-info (str "solidclj.runtime: reactive update depth exceeded "
                            max-depth " — likely an effect writing its own dependency")
                       {})))
-    (clean-node! node)
-    (binding [*owner*    node
-              *listener* node
-              *depth*    (inc *depth*)]
-      ((:fn @node)))))
+    (if (nil? *deferred*)
+      ;; outermost computation of this turn: collect defer!s from the
+      ;; whole synchronous cascade, flush after it settles
+      (let [q (atom [])]
+        (binding [*deferred* q]
+          (run-computation* node))
+        (doseq [f @q] (f)))
+      (run-computation* node))))
 
 (defn create-effect
   "Run `f` tracked: signal reads inside subscribe it, and it re-runs
@@ -182,6 +208,24 @@
   (when-some [o *owner*]
     (swap! o update :cleanups conj f))
   nil)
+
+(defn untrack
+  "Run `f` with tracking suspended: signal reads inside do not
+  subscribe the current computation. The owner stays — cleanups still
+  register."
+  [f]
+  (binding [*listener* nil]
+    (f)))
+
+(defn create-memo
+  "Memoized derived signal: returns a getter. Computes eagerly, re-runs
+  when tracked reads change, and propagates downstream only when
+  `equals` (default identical?) says the result changed."
+  ([f] (create-memo f identical?))
+  ([f equals]
+   (let [[g s] (create-signal ::unset equals)]
+     (create-effect (fn [] (s (fn [_] (f)))))
+     g)))
 
 ;; ---- The tree -----------------------------------------------------------------
 
