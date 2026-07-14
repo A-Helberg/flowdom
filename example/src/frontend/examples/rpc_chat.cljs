@@ -1,9 +1,9 @@
 (ns frontend.examples.rpc-chat
   (:require-macros [solidclj.hiccup-macros :refer [h]])
-  ;; no rpc in sight: frontend.chat wraps the queries and commands in
+  ;; no rpc in sight: api.chat wraps the queries and commands in
   ;; plain functions, so this component doesn't know it's talking to a
   ;; server (or, on this static site, to the fake one).
-  (:require [frontend.chat :as chat]
+  (:require [api.chat :as chat]
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 

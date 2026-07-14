@@ -1,5 +1,5 @@
 (ns server.tx-listener
-  "Browser twin of the real listener (tx_listener.clj, inlined on the
+  "Browser twin of the real listener (tx_listener.clj, shown on the
   tx-listener page): same fn, same flow of {:db-before :db-after
   :tx-data} reports — minus the blocking queue this platform can't
   have."

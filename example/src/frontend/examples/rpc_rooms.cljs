@@ -1,6 +1,6 @@
 (ns frontend.examples.rpc-rooms
   (:require-macros [solidclj.hiccup-macros :refer [h]])
-  (:require [frontend.chat :as chat]
+  (:require [api.chat :as chat]
             [solidclj.api :as s]
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))

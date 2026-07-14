@@ -519,23 +519,76 @@
       :title "Queries & commands"
       :prose
       [:<>
-       [:p "solidrpc streams query results from the server over SSE: "
+       [:p "solidrpc is CQRS-shaped: reads and writes are different "
+        "problems, so they are different operations. A "
+        [:strong "query"] " is a read — it wants to stay correct as "
+        "server state changes. A " [:strong "command"] " is a write "
+        "— it happens once and either works or doesn't. Splitting "
+        "them lets each side get the right tool: queries subscribe, "
+        "commands post. Both are plain functions on the server, "
+        "registered under a symbol the client calls them by."]
+       [:h2 "Queries"]
+       [:p "A query is a subscription, not a fetch. "
         [:code "(rpc/query 'chat/messages)"] " returns a missionary "
-        [:strong "flow"] ". On this page the server's state is just "
-        "an atom, and a query is what you'd write yourself: "
-        [:code "m/watch"] " the atom, map a function over it, "
-        [:code "dedupe"] " — it re-runs when the state changes and "
-        "pushes only changed answers, a full value first, diffs "
-        "after. None of that is visible from here: a flow is a flow, "
-        "so " [:code "sm/hold"] " bridges it into hiccup and "
-        "everything from the Missionary section applies unchanged. "
-        "The connection opens when a page first derefs the hold and "
-        "closes when the last subscriber leaves. Writes go the other "
-        "way as plain POSTs — " [:code "rpc/command"] " returns a "
-        "promise, and on the server a command is a "
-        [:code "swap!"] "."]
+        [:strong "flow"] " that streams results over SSE: a full "
+        "value first, then every changed answer for as long as "
+        "anyone is subscribed. That is the reason to use one — the "
+        "component never refetches, polls, or invalidates a cache, "
+        "because the answer keeps itself current."]
+       [:p "On the server, a query is any missionary flow. This "
+        "page's server state is an atom, so the flow is one you'd "
+        "write yourself: " [:code "m/watch"] " the atom, map a "
+        "function over it, " [:code "dedupe"] " — it re-runs when "
+        "the state changes and pushes only changed answers. From "
+        "the client none of that is visible: a flow is a flow, so "
+        [:code "sm/hold"] " bridges it into hiccup and everything "
+        "from the Missionary section applies unchanged, including "
+        "laziness — the connection opens when a page first derefs "
+        "the hold and closes when the last subscriber leaves."]
+       [:h2 "Commands"]
+       [:p "A command is one round trip. "
+        [:code "(rpc/command 'chat/send! text)"] " is a plain POST "
+        "that returns a promise; on the server it's a function that "
+        "performs the write — on this page, a " [:code "swap!"]
+        " on the same atom the query watches."]
+       [:p "Note what the command doesn't do: it doesn't return the "
+        "new message list, and nothing on the client asks for it. "
+        "The write changes the atom, the query's flow re-runs, and "
+        "the update arrives over the stream that's already open. "
+        "That loop is the payoff of the split: writes don't need to "
+        "describe their effects, because every query they affect "
+        "pushes the new answer."]
+       [:h2 "Why SSE"]
+       [:p "The obvious tool for push is a WebSocket, but the split "
+        "means neither direction needs one: queries push from "
+        "server to client, commands are one-shot requests from "
+        "client to server, so each can be ordinary HTTP. An SSE "
+        "response is just a long-lived HTTP stream and a command is "
+        "a plain POST — both route through any load balancer to any "
+        "node, get retried and traced like any other request, and "
+        "under HTTP/2 and HTTP/3 every open query multiplexes over "
+        "a single connection."]
+       [:p "The bigger reason is that SSE carries no server-side "
+        "session. A query stream is derived from current state — "
+        "re-run the function, get the answer — so when a connection "
+        "drops, the client reconnects with backoff, any node picks "
+        "it up, and the query re-runs against the state of now. "
+        "That makes rolling deploys transparent: an instance dies, "
+        "its streams drop, clients land on a new instance, and the "
+        "UI blinks once and catches up. A WebSocket is the opposite "
+        "— a stateful pipe to one specific server, which is what "
+        "sticky sessions and message brokers exist to work around."]
+       [:p "The tradeoff is that SSE only pushes. If you need "
+        "low-latency messaging from client to server — multiplayer "
+        "cursors, collaborative editing — WebSockets are the right "
+        "tool for now; when WebTransport (bidirectional streams "
+        "over QUIC) matures, that choice is worth revisiting. For "
+        "streamed reads and one-shot writes, SSE is strictly "
+        "simpler; the solidrpc README has the longer version of "
+        "this argument."]
+       [:h2 "The api namespace"]
        [:p "Components never write " [:code "rpc/query"] " at call "
-        "sites, though. The shape is a " [:code ".cljc"]
+        "sites. The shape is a " [:code ".cljc"]
         " api namespace per domain — the " [:code ":clj"] " branch is "
         "the real implementation, the " [:code ":cljs"] " branch "
         "delegates to solidrpc, and the var is registered under its "
@@ -560,6 +613,24 @@
 ;; server startup:
 ;; (solidrpc.registry/register! #'api.chat/messages)
 ;; (solidrpc.registry/register! #'api.chat/send!)"]
+       [:p "The reason for the shape is referential transparency: "
+        [:code "(chat/messages)"] " returns a flow of the messages "
+        "on either platform. The " [:code ":clj"] " caller gets it "
+        "in-process; the " [:code ":cljs"] " caller gets the same "
+        "flow, its values arriving over a network. Because the call "
+        "means one thing, callers don't care where they run — "
+        "server code, tests and the REPL use the " [:code ":clj"]
+        " branch directly, components compose the flow exactly as "
+        "they would a local one, and swapping what's behind the "
+        "function changes no call site."]
+       [:p "The naming holds together mechanically, too: "
+        [:code "register!"] " keys the var by its own symbol, and "
+        "the syntax-quoted " [:code "`messages"] " in the "
+        [:code ":cljs"] " branch resolves in the same namespace — "
+        "both sides derive " [:code "api.chat/messages"] " from "
+        "where the code sits. There is no wire-name string to keep "
+        "in sync, and renaming the function renames the endpoint "
+        "with it."]
        [:p "This site is static — there is no server. The demos run "
         "on browser stand-ins behind the real names (on later pages "
         "even " [:code "datomic.api"] " resolves to one), and the "
@@ -576,35 +647,101 @@
       :title "A Datomic tx-listener"
       :prose
       [:<>
-       [:p "The previous page's server state was an atom, and "
-        [:code "m/watch"] " made change notification free. Swap the "
-        "atom for a real database and that's the piece you have to "
-        "replace: a feed of changes. Datomic's is "
-        [:code "d/tx-report-queue"] ", a blocking queue of tx-reports, "
-        "and pulling is exactly missionary's model: the whole listener "
-        "is one " [:code "m/ap"] " — attach the queue, " [:code ".take"]
-        " forever on the blocking executor, detach on cancel. No "
-        "adapter thread, no core.async, no callbacks."]
-       [:p "One thing the code insists on: Datomic keeps " [:em "one"]
-        " report queue per connection and concurrent takers steal from "
-        "each other, so the listener runs once and is shared with "
-        [:code "m/stream"] " — lazy and refcounted, the JVM twin of "
-        [:code "sm/hold"] "'s lifecycle: the queue attaches when the "
-        "first subscriber arrives and detaches when the last one "
-        "leaves. The demo below is just the feed: press the buttons "
-        "and watch reports land."]
+       [:p "The queries page had live results because change "
+        "notification was free: the server's state was an atom, and "
+        [:code "m/watch"] " emits every new value. A real database "
+        "doesn't hand you that — what it hands you is a feed of "
+        "transactions, and turning that feed into a flow is the "
+        "piece to build. Datomic's feed is "
+        [:code "d/tx-report-queue"] ": a blocking queue onto which "
+        "the peer library delivers every transaction as a "
+        [:strong "tx-report"] " — a map of " [:code ":db-before"]
+        ", " [:code ":db-after"] " and " [:code ":tx-data"] ", the "
+        "datoms that changed."]
+       [:h2 "The listener"]
+       [:p "Pulling from a blocking queue is exactly missionary's "
+        "model — park, take, emit, repeat — so on the JVM the whole "
+        "listener is one " [:code "m/ap"] ". No adapter thread, no "
+        "core.async, no callbacks:"]
+       [ui/code-block
+        "(ns server.tx-listener
+  (:require [datomic.api :as d]
+            [missionary.core :as m])
+  (:import [java.util.concurrent BlockingQueue]))
+
+(defn tx-report-flow
+  \"A discrete flow of tx-reports from `conn`.\"
+  [conn]
+  (m/ap
+    (let [^BlockingQueue queue
+          (m/?> (m/observe (fn [emit!]
+                             (emit! (d/tx-report-queue conn))
+                             #(d/remove-tx-report-queue conn))))]
+      (loop []
+        (m/amb (m/? (m/via m/blk (.take queue)))
+               (recur))))))"]
+       [:p "Two lifecycle details carry the design. First, a flow "
+        "is a recipe: nothing attaches to the connection until a "
+        "consumer runs it, and cancelling detaches — which matters, "
+        "because a report queue nobody drains accumulates reports "
+        "forever. Second, " [:code "m/observe"] " is the "
+        "acquire/release bracket: it emits the queue once at spawn "
+        "and runs its cleanup thunk exactly once at cancel. A "
+        [:code "try/finally"] " around the loop would not work — "
+        [:code "m/amb"] " forks the process, so " [:code "finally"]
+        " would run once per fork, detaching the queue right after "
+        "the first report."]
+       [:h2 "One queue per connection"]
+       [:p "Datomic keeps " [:em "one"] " report queue per "
+        "connection, and concurrent takers steal reports from each "
+        "other. So the listener runs once, and everything "
+        "downstream shares it:"]
+       [ui/code-block
+        ";; server.notes
+(defonce tx-reports (m/stream (txl/tx-report-flow conn)))"]
+       [:p [:code "m/stream"] " is lazy and refcounted — the JVM "
+        "twin of " [:code "sm/hold"] "'s lifecycle. The queue "
+        "attaches when the first subscriber arrives, every later "
+        "subscriber joins the running listener, and it detaches "
+        "when the last one leaves."]
+       [:p "The demo below watches the feed. A tx-report flow is a "
+        "server flow like any other, so it reaches the browser "
+        "exactly as the queries page taught — an api namespace "
+        "whose " [:code ":clj"] " branch shapes the shared stream "
+        "for the wire and whose " [:code ":cljs"] " branch is a "
+        "query:"]
+       [ui/code-block
+        "(ns api.txes
+  (:require [missionary.core :as m]
+            #?(:clj  [datomic.api :as d])
+            #?(:clj  [server.notes :as notes])
+            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+
+(defn reports
+  \"The tx-report feed so far — shaped for the wire, no db values.\"
+  []
+  #?(:clj  (->> notes/tx-reports
+                (m/eduction (map (fn [{:keys [db-after tx-data]}]
+                                   {:t (d/basis-t db-after)
+                                    :tx-data tx-data})))
+                (m/reductions conj []))
+     :cljs (rpc/query `reports)))
+
+;; add-note! and ping! are commands — the same shape as api.chat/send!
+;; server startup:
+;; (solidrpc.registry/register! #'api.txes/reports)"]
+       [:p "Transact a note and the report lands with its basis-t "
+        "and datoms — and so does the second button's transaction, "
+        "which touches no " [:code ":note/*"] " attribute and which "
+        "no notes query would care about. The feed carries every "
+        "transaction on the connection; deciding which reports "
+        "matter, and what to re-run when they do, is the job of the "
+        "query built on top."]
        [:p "Run the example app full-stack and "
         [:code "(server.notes/add-note! \"hi\")"] " from a REPL "
-        "pushes to every connected browser; the listener and its "
-        "solidrpc wiring are the two files below."]
-       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The listener (server.tx-listener)"]
-        [ui/code-block (rc/inline "server/tx_listener.clj")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "Wired into solidrpc (server.notes)"]
-        [ui/code-block (rc/inline "server/notes.clj")]]]
+        "pushes to every connected browser — the snippets above are "
+        "the real code, in " [:code "server.tx-listener"] " and "
+        [:code "server.notes"] "."]]
       :examples
       [{:source    (rc/inline "frontend/examples/datomic_txes.cljs")
         :component datomic-txes/example}]}

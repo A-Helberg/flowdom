@@ -28,7 +28,7 @@ This makes rolling deploys transparent. When a backend instance is replaced, its
 Commands (writes) are plain POSTs. There is no benefit to funnelling them through the same socket as pushes. Keeping them as independent requests means they get retried, routed, and traced like any other HTTP call.
 
 **The tradeoff.**
-SSE is server-to-client only. If you need low-latency client-to-server messaging (multiplayer cursors, collaborative editing), WebSockets are the right tool. For the query/command pattern — where reads are streamed and writes are one-shot — SSE is strictly simpler and more scalable.
+SSE is server-to-client only. If you need low-latency client-to-server messaging (multiplayer cursors, collaborative editing), WebSockets are the right tool for now; when WebTransport (bidirectional streams over QUIC) matures, that choice is worth revisiting. For the query/command pattern — where reads are streamed and writes are one-shot — SSE is strictly simpler and more scalable.
 
 ---
 ## Key design decisions
