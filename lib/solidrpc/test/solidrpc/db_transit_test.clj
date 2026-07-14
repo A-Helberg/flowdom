@@ -2,7 +2,7 @@
   "The db-as-value serialization boundary, without Datomic: a fake db
   type stands in for datomic.db.Db. Write side: value → #solid/db
   {:basis-t t}. Read side: a resolver turns the ref back into an
-  actual value; without one, the tag reads as a plain DbRef record.
+  actual value; without one, the tag reads as a generic Ref record.
   Handlers are supplied per call, the way a consumer supplies them at
   the rpc mount point — the global registry stays untouched."
   (:require [clojure.test :refer [deftest is testing]]
@@ -35,6 +35,6 @@
     (let [wire (transit/write (get history 9) {:handlers db-out})]
       (is (re-find #"solid/db" wire))
       (is (not (re-find #"two" wire)) "no domain data crosses")))
-  (testing "without a resolver, the tag reads as the DbRef record"
+  (testing "without a resolver, the tag reads as a generic Ref"
     (let [wire (transit/write (get history 7) {:handlers db-out})]
-      (is (= (transit/->DbRef 7) (transit/read wire))))))
+      (is (= (transit/ref transit/db-tag {:basis-t 7}) (transit/read wire))))))

@@ -9,7 +9,7 @@
   are cheap); when a value crosses the wire, solidrpc.transit
   serializes it as a ref (#solid/db {:basis-t t}) and deserializes it
   back into an actual value on the way in — the exchange is invisible
-  to application code. Clients hold opaque DbRef tokens and pass them
+  to application code. Clients hold opaque generic Refs and pass them
   like any other value.
 
   The anchor

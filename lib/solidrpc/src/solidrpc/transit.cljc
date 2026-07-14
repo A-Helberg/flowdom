@@ -1,118 +1,116 @@
 (ns solidrpc.transit
-  "Transit encode/decode for the wire, with an extension point for
-  app-registered handlers: server values, client refs, exchanged at
-  the serialization boundary.
+  "Transit encode/decode for the wire: server values, client refs,
+  exchanged at the serialization boundary.
 
-  Handlers come in two scopes. Request-independent ones (anything
-  reconstructible from startup context, like a db resolver closing
-  over the conn) go in the registry via register-read-handler! /
-  register-write-handler!. Request-dependent ones (a user from a
-  session, however sessions work) are supplied per call through the
-  :handlers opt on read/write — solidrpc.server threads them from the
-  opts you pass at the rpc mount point, where your router fn has the
-  request in scope to close over.
+  There is ONE handler mechanism: pass them where you call read/write
+  — in practice, the opts you hand solidrpc.server's handlers at the
+  rpc mount point, where your router fn has the request in scope to
+  close over. Handlers that only need startup context (a db resolver
+  closing over the conn) are the same thing built once and reused;
+  request-dependent ones (a user from a session, however sessions
+  work) are closures over the request. Nothing registers anything by
+  side effect.
 
-  The main use so far: database values. A database is a value; its wire
-  form is a tiny ref — #solid/db {:basis-t 1010} — because a basis-t
-  is all a peer needs to reconstitute the value. The exchange happens
-  HERE, at the serialization boundary, so it is invisible to
-  application code:
+  The client needs no handlers at all, because refs are generic: a
+  ref writes out under its own tag, and any incoming tag without a
+  handler reads back as a ref. So a server-minted value arrives as
+  (ref \"solid/db\" {:basis-t 1010}) — value equality, round-trips —
+  and a client-constructed marker is just (ref \"app/viewer\").
+  Construct with `ref`, inspect with `ref?`/`ref-tag`/`ref-rep`; the
+  concrete type differs per platform (a record on the JVM, transit's
+  own TaggedValue on cljs, where the decoder hard-codes TaggedValue
+  for unknown composite tags), which the accessors hide.
 
-  - server → wire: an app-registered write handler turns a db value
-    into the ref (e.g. datomic.db.Db → {:basis-t (d/basis-t db)})
-  - wire → client: the ref reads as a DbRef record — an opaque token
-    components pass around like any value (value equality, so arg
-    deduplication and satom =-gating just work)
-  - client → wire: DbRef writes back as the same tag
-  - wire → server: an app-registered read handler resolves the ref
-    back to an ACTUAL db value (d/as-of), so endpoint fns receive
-    databases, never refs
+  The worked example: database values. A db cannot ship its data, so
+  the server writes it as #solid/db {:basis-t t} (a type-dispatched
+  write handler) and resolves incoming refs back to actual db values
+  (a tag-dispatched read handler) — both supplied at the mount point;
+  see the example app's server.notes + server.core.
 
-  nil crosses unchanged, and no meaning is assigned to it here — write
-  handlers dispatch on type and read handlers on tag, so nil never
-  reaches a handler. What a missing value means is the consumer's
-  decision, made where it is visible: a facade may substitute the
-  current db for a nil anchor, a resolver may treat {:basis-t nil} as
-  now, another domain may reject nil outright — all consumer-side
-  choices, none imposed by this namespace.
+  nil crosses unchanged, and no meaning is assigned to it here —
+  handlers dispatch on type and tag, so nil never reaches one. What a
+  missing value means is the consumer's decision, made where it is
+  visible."
+  (:refer-clojure :exclude [read write ref])
+  (:require [cognitect.transit :as t]
+            #?(:cljs [com.cognitect.transit.types :as ty]))
+  #?(:clj (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
+                   [com.cognitect.transit DefaultReadHandler])))
 
-  Without app registration the default read handler on both platforms
-  yields the DbRef record itself, so the lib works standalone."
-  (:refer-clojure :exclude [read write])
-  (:require [cognitect.transit :as t])
-  #?(:clj (:import [java.io ByteArrayInputStream ByteArrayOutputStream])))
+#?(:clj (defrecord Ref [tag rep]))
 
-(defrecord DbRef [basis-t])
+;; transit-cljs extends IEquiv onto its UUID/Long types but not
+;; TaggedValue; refs need value equality (follow-args dedupes args
+;; with =), so we extend it here.
+#?(:cljs
+   (extend-type ty/TaggedValue
+     IEquiv
+     (-equiv [this other]
+       (and (t/tagged-value? other)
+            (= (.-tag this) (.-tag ^js other))
+            (= (.-rep this) (.-rep ^js other))))
+     IHash
+     (-hash [this] (hash [(.-tag this) (.-rep this)]))
+     IPrintWithWriter
+     (-pr-writer [this writer _opts]
+       (-write writer (str "#solidrpc/ref [" (.-tag this) " "
+                           (pr-str (.-rep this)) "]")))))
+
+(defn ref
+  "A generic ref: plain data denoting a server value. Writes out
+  under `tag`; the server's mount-point read handler for that tag
+  reconstructs the value."
+  ([tag] (ref tag {}))
+  ([tag rep] #?(:clj  (->Ref tag rep)
+                :cljs (t/tagged-value tag rep))))
+
+(defn ref? [x]
+  #?(:clj  (instance? Ref x)
+     :cljs (t/tagged-value? x)))
+
+(defn ref-tag [r]
+  #?(:clj (:tag r) :cljs (.-tag ^js r)))
+
+(defn ref-rep [r]
+  #?(:clj (:rep r) :cljs (.-rep ^js r)))
 
 (def db-tag "solid/db")
 
-(defonce ^:private write-handlers*
-  (atom {DbRef (t/write-handler (fn [_] db-tag) (fn [r] (into {} r)))}))
+#?(:clj
+   (def ^:private ref-write-handler
+     ;; a Ref writes under its own tag (cljs needs nothing: transit
+     ;; writes TaggedValue natively)
+     (t/write-handler (fn [r] (:tag r)) (fn [r] (:rep r)))))
 
-(defonce ^:private read-handlers*
-  (atom {db-tag (t/read-handler map->DbRef)}))
+;; …and any unhandled tag reads back as a ref. On the JVM that takes
+;; a DefaultReadHandler; on cljs it is transit's native behavior
+;; (unknown composite tags decode to TaggedValue unconditionally —
+;; the decoder consults no default handler for them).
+#?(:clj
+   (def ^:private default-read
+     (reify DefaultReadHandler
+       (fromRep [_ tag rep] (->Ref tag rep)))))
 
-#?(:cljs (defonce ^:private writer* (atom nil)))
-#?(:cljs (defonce ^:private reader* (atom nil)))
+(defn- read-handler-map [handlers]
+  (into {} (map (fn [[tag f]] [tag (t/read-handler f)])) handlers))
 
-#?(:cljs
-   (defn- rebuild-cljs! []
-     (reset! writer* (t/writer :json {:handlers @write-handlers*}))
-     (reset! reader* (t/reader :json {:handlers @read-handlers*}))))
+(defn- write-handler-map [handlers]
+  (into #?(:clj {Ref ref-write-handler} :cljs {})
+        (map (fn [[type {:keys [tag rep]}]]
+               ;; force invocation: transit treats a non-fn rep as a
+               ;; constant, which would silently write keywords like
+               ;; :sid literally
+               [type (t/write-handler (fn [_] tag) (fn [v] (rep v)))]))
+        handlers))
 
-(defn register-write-handler!
-  "Register a write handler: values of `type` serialize as `tag` with
-  (rep-fn value) as their representation. E.g. the server side of
-  db-as-value:
-
-      (register-write-handler! datomic.db.Db db-tag
-                               (fn [db] {:basis-t (d/basis-t db)}))"
-  [type tag rep-fn]
-  (swap! write-handlers* assoc type (t/write-handler (fn [_] tag) rep-fn))
-  #?(:cljs (rebuild-cljs!))
-  nil)
-
-(defn register-read-handler!
-  "Register a read handler for `tag`. E.g. the server side of
-  db-as-value — resolving the ref back to an actual database value:
-
-      (register-read-handler! db-tag
-                              (fn [{:keys [basis-t]}]
-                                (cond-> (d/db conn) basis-t (d/as-of basis-t))))"
-  [tag f]
-  (swap! read-handlers* assoc tag (t/read-handler f))
-  #?(:cljs (rebuild-cljs!))
-  nil)
-
-(defn- read-handler-map
-  "The registry, with per-call `handlers` ({tag (fn [rep] …)}) merged
-  on top. Per-call handlers win on tag collision and never touch the
-  registry."
-  [handlers]
-  (if (seq handlers)
-    (merge @read-handlers*
-           (into {} (map (fn [[tag f]] [tag (t/read-handler f)])) handlers))
-    @read-handlers*))
-
-(defn- write-handler-map
-  "The registry, with per-call `handlers`
-  ({type {:tag \"…\" :rep (fn [v] …)}}) merged on top."
-  [handlers]
-  (if (seq handlers)
-    (merge @write-handlers*
-           (into {} (map (fn [[type {:keys [tag rep]}]]
-                           ;; force invocation: transit treats a non-fn
-                           ;; rep as a constant, which would silently
-                           ;; write keywords like :sid literally
-                           [type (t/write-handler (fn [_] tag) (fn [v] (rep v)))]))
-                 handlers))
-    @write-handlers*))
+#?(:cljs (def ^:private default-writer (t/writer :json)))
+#?(:cljs (def ^:private default-reader (t/reader :json)))
 
 (defn write
   "Encode `data`. Opts:
-    :handlers  {type {:tag \"…\" :rep (fn [v] …)}} — per-call write
-               handlers, merged over the registry. Supply these at the
-               rpc mount point for request-scoped encoding."
+    :handlers  {type {:tag \"…\" :rep (fn [v] …)}} — write handlers
+               for this call, e.g. a db value's type → its ref form.
+               Supply them at the rpc mount point."
   ([data] (write data nil))
   ([data {:keys [handlers]}]
    #?(:clj  (let [out (ByteArrayOutputStream.)
@@ -121,23 +119,23 @@
               (.toString out "UTF-8"))
       :cljs (if (seq handlers)
               (t/write (t/writer :json {:handlers (write-handler-map handlers)}) data)
-              (do (when (nil? @writer*) (rebuild-cljs!))
-                  (t/write @writer* data))))))
+              (t/write default-writer data)))))
 
 (defn read
   "Decode `s`. Opts:
-    :handlers  {tag (fn [rep] …)} — per-call read handlers, merged
-               over the registry. Supply these at the rpc mount point,
-               closing over the request (session lookup, verification,
-               whatever reconstruction means for that value type)."
+    :handlers  {tag (fn [rep] …)} — read handlers for this call,
+               reconstructing values from refs. Supply them at the
+               rpc mount point, closing over the request when
+               reconstruction needs it. Tags without a handler read
+               as generic refs."
   ([s] (read s nil))
   ([s {:keys [handlers]}]
    #?(:clj  (t/read (t/reader (if (string? s)
                                 (ByteArrayInputStream. (.getBytes ^String s "UTF-8"))
                                 s)
                               :json
-                              {:handlers (read-handler-map handlers)}))
+                              {:handlers        (read-handler-map handlers)
+                               :default-handler default-read}))
       :cljs (if (seq handlers)
               (t/read (t/reader :json {:handlers (read-handler-map handlers)}) s)
-              (do (when (nil? @reader*) (rebuild-cljs!))
-                  (t/read @reader* s))))))
+              (t/read default-reader s)))))

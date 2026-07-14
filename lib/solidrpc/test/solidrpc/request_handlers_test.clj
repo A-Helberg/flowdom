@@ -9,9 +9,6 @@
             [solidrpc.server :as server]
             [solidrpc.transit :as transit]))
 
-;; the client-side stand-in: an opaque token the wire carries
-(defrecord Token [sid])
-
 ;; a server-side value type for the write direction
 (defrecord Box [v])
 
@@ -28,19 +25,18 @@
     (with-redefs [registry/registry (atom {})]
       (f))))
 
-(def ^:private token-out
-  ;; how the test writes a Token into a request payload — the client
-  ;; role, where the token is just data
-  {Token {:tag "test/user" :rep :sid}})
+(defn- token
+  ;; the client role: a generic ref, written by the built-in Ref
+  ;; handler — no client-side registration of any kind
+  [sid]
+  (transit/ref "test/user" {:sid sid}))
 
 (defn- query-req [fn-sym & args]
-  {:query-params {"q" (transit/write {:fn-name fn-sym :args (vec args)}
-                                     {:handlers token-out})}})
+  {:query-params {"q" (transit/write {:fn-name fn-sym :args (vec args)})}})
 
 (defn- command-req [fn-sym & args]
   {:body (java.io.StringReader.
-          (transit/write {:fn-name fn-sym :args (vec args)}
-                         {:handlers token-out}))})
+          (transit/write {:fn-name fn-sym :args (vec args)}))})
 
 (defn- first-event
   "Takes the first SSE frame off a response body and returns
@@ -54,16 +50,18 @@
 ;; transit-level: merge semantics
 ;; ---------------------------------------------------------------------------
 
-(deftest per-call-handlers-merge-over-the-registry
-  (testing "per-call read handler wins on tag collision"
-    (let [wire (transit/write (transit/->DbRef 42))]
-      (is (= (transit/->DbRef 42) (transit/read wire))
-          "registry default: the DbRef record")
-      (is (= [:resolved 42]
-             (transit/read wire {:handlers {transit/db-tag
-                                            (fn [{:keys [basis-t]}] [:resolved basis-t])}})))))
-  (testing "…and never touches the registry"
-    (is (= (transit/->DbRef 42) (transit/read (transit/write (transit/->DbRef 42)))))))
+(deftest per-call-handlers-with-generic-ref-default
+  (testing "a tag without a handler reads as a generic Ref"
+    (let [wire (transit/write (transit/ref transit/db-tag {:basis-t 42}))]
+      (is (= (transit/ref transit/db-tag {:basis-t 42}) (transit/read wire)))
+      (testing "…and a per-call handler reconstructs the value instead"
+        (is (= [:resolved 42]
+               (transit/read wire {:handlers {transit/db-tag
+                                              (fn [{:keys [basis-t]}] [:resolved basis-t])}}))))))
+  (testing "per-call handlers leave other calls untouched"
+    (let [wire (transit/write (transit/ref transit/db-tag {:basis-t 42}))]
+      (transit/read wire {:handlers {transit/db-tag (fn [_] :other)}})
+      (is (= (transit/ref transit/db-tag {:basis-t 42}) (transit/read wire))))))
 
 ;; ---------------------------------------------------------------------------
 ;; handle-query
@@ -71,14 +69,14 @@
 
 (deftest query-read-handler-closes-over-the-request
   (registry/register! #'whoami)
-  (let [req  (assoc (query-req 'solidrpc.request-handlers-test/whoami (->Token "abc"))
+  (let [req  (assoc (query-req 'solidrpc.request-handlers-test/whoami (token "abc"))
                     :cookies {"session" {:value "cookie-77"}})
         ;; the mount point: the consumer's fn has req in scope, so the
         ;; decoder is a closure over it
         resp (server/handle-query
               req
               {:read-handlers
-               {"test/user" (fn [sid]
+               {"test/user" (fn [{:keys [sid]}]
                               {:name (str sid "@" (get-in req [:cookies "session" :value]))})}})]
     (is (= 200 (:status resp)))
     (let [[event data] (first-event resp nil)]
@@ -100,7 +98,7 @@
 (deftest rejecting-read-handler-maps-to-its-status
   (registry/register! #'whoami)
   (let [resp (server/handle-query
-              (query-req 'solidrpc.request-handlers-test/whoami (->Token "bad"))
+              (query-req 'solidrpc.request-handlers-test/whoami (token "bad"))
               {:read-handlers
                {"test/user" (fn [_] (throw (ex-info "no session" {:solidrpc/status 401})))}})]
     (is (= 401 (:status resp))
@@ -115,8 +113,8 @@
   (registry/register! #'boxed-command)
   (testing "decode side"
     (let [resp (server/handle-command
-                (command-req 'solidrpc.request-handlers-test/whoami (->Token "abc"))
-                {:read-handlers {"test/user" (fn [sid] {:name sid})}})
+                (command-req 'solidrpc.request-handlers-test/whoami (token "abc"))
+                {:read-handlers {"test/user" (fn [{:keys [sid]}] {:name sid})}})
           body (transit/read (:body resp))]
       (is (= 200 (:status resp)))
       (is (= {:hello "abc"} (:result body)))))
@@ -130,7 +128,7 @@
 (deftest command-rejection-maps-to-its-status
   (registry/register! #'whoami)
   (let [resp (server/handle-command
-              (command-req 'solidrpc.request-handlers-test/whoami (->Token "bad"))
+              (command-req 'solidrpc.request-handlers-test/whoami (token "bad"))
               {:read-handlers
                {"test/user" (fn [_] (throw (ex-info "expired" {:solidrpc/status 401})))}})]
     (is (= 401 (:status resp)))

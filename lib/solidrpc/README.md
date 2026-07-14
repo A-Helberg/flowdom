@@ -51,35 +51,35 @@ SSE is server-to-client only. If you need low-latency client-to-server messaging
 
 ### The serialization boundary
 
-`solidrpc.transit` provides the general mechanism: **server values, client refs, exchanged at the wire.** Register how a value type is named going out (value → rep) and reconstructed coming in (rep → value); application code on the server passes real values around, and the client holds opaque refs it treats as plain data. `nil` crosses unchanged and carries no meaning at this layer — handlers dispatch on type and tag, so nil never reaches one. What a missing value means (now? anonymous? an error?) is your domain's decision, made in your endpoint fns and handler reps where it's visible.
+`solidrpc.transit` provides the general mechanism: **server values, client refs, exchanged at the wire.** There is one handler mechanism — handlers are supplied as opts where you mount the rpc handlers — and the client needs none at all, because refs are generic: a `Ref` record writes out under its own `:tag`, and any incoming tag without a handler reads back as a `Ref`. A server-minted value arrives as `(->Ref "solid/db" {:basis-t 1010})` — plain data, value equality, round-trips — and a client-constructed marker is just `(transit/ref "app/viewer" {})`. `nil` crosses unchanged and carries no meaning at this layer; what a missing value means (now? anonymous? an error?) is your domain's decision, made in your endpoint fns and handler reps where it's visible.
 
-The db value is the first registered instance. A db cannot ship its data, so its wire form is `#solid/db {:basis-t 1010}` — a basis-t is all a peer needs — and the incoming ref resolves back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs. Handlers that only need startup-time context (here: the conn) go in the registry once:
+The db value is the worked example. A db cannot ship its data, so its wire form is `#solid/db {:basis-t 1010}` — a basis-t is all a peer needs — and the incoming ref resolves back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs. Handlers that only need startup context are built once, closing over the conn, as plain data:
 
 ```clojure
-(transit/register-write-handler! datomic.db.Db transit/db-tag
-                                 (fn [db] {:basis-t (d/basis-t db)}))
-(transit/register-read-handler! transit/db-tag
-                                (fn [{:keys [basis-t]}]
-                                  (cond-> (d/db conn) basis-t (d/as-of basis-t))))
+(def transit-handlers
+  {:read-handlers  {transit/db-tag (fn [{:keys [basis-t]}]
+                                     (cond-> (d/db conn) basis-t (d/as-of basis-t)))}
+   :write-handlers {datomic.db.Db {:tag transit/db-tag
+                                   :rep (fn [db] {:basis-t (d/basis-t db)})}}})
 ```
 
 The server does not restrict which t a client may name. The trust boundary is the query fn — authorize against the *present*, read domain data at t — a ref is usually a re-observation of answers the client was already served, and data that must not be readable at *any* t is excision's job.
 
-### Request-scoped handlers
+### Handlers at the mount point
 
-Some value types can only be reconstructed with the request in hand — a "current user" from a session, whatever the session mechanism is. Those handlers are supplied where you mount the rpc handlers: your router fn has the request in scope, so the decoder is a plain closure over it. solidrpc never learns whether that means a JWT, a server-side session store, or a db lookup:
+Everything above is handed to solidrpc where you mount the handlers. Your router fn has the request in scope, so a value type that can only be reconstructed *with the request* — a current user from a session, whatever the session mechanism is — is a handler closing over it, sitting in the same map as the startup-scoped ones. The mount point becomes the app's whole value vocabulary, per request, and solidrpc never learns whether reconstruction means a JWT, a server-side session store, or a db lookup:
 
 ```clojure
 ["/api/query"
  {:get (fn [req]
          (rpc/handle-query req
-           {:read-handlers
-            {"myapp/user" (fn [rep]
-                            (sessions/user-for
-                             (get-in req [:cookies "sid" :value]) rep))}}))}]
+           (update transit-handlers :read-handlers assoc
+                   "myapp/user" (fn [rep]
+                                  (sessions/user-for
+                                   (get-in req [:cookies "sid" :value]) rep)))))}]
 ```
 
-`handle-command` takes the same opts. `:write-handlers` (`{type {:tag … :rep …}}`) covers the outgoing direction and rides the SSE stream's closures, so per-request encoding holds for the connection's lifetime. Per-call handlers merge over the registry and never touch it.
+`handle-command` takes the same opts. `:write-handlers` (`{type {:tag … :rep …}}`) covers the outgoing direction and rides the SSE stream's closures, so per-request encoding holds for the connection's lifetime.
 
 A rejecting handler signals its status through ex-data — `(throw (ex-info "no session" {:solidrpc/status 401}))` — and the response carries it, so consumers can tell an invalid session from a server error.
 
