@@ -14,15 +14,17 @@
 
   The anchor
   ==========
-  `live`'s db argument is the flow's lower bound:
+  `live`'s db argument is the flow's lower bound: the flow starts
+  from (f anchor) and immediately catches up to the current db; under
+  latest-wins (m/relieve) a consumer never observes anything older
+  than the anchor, and usually just sees the freshest answer
+  directly.
 
-    a db value  — the flow starts from (f value) and immediately
-                  catches up to the current db; under latest-wins
-                  (m/relieve) a consumer never observes anything
-                  older than the anchor, and usually just sees the
-                  freshest answer directly.
-    nil         — 'now': anchor to the current db. The default for
-                  fresh page loads.
+  The anchor is passed to f exactly as given — this namespace does
+  not inspect or coerce it, nil included. A facade whose convention
+  is 'nil means now' substitutes before calling:
+
+      (live/live env (or db ((:db env))) all-notes …)
 
   Queries anchored to the same value start from the same point in
   time, and a command response carrying the post-transaction db gives
@@ -67,13 +69,13 @@
   (:require [missionary.core :as m]))
 
 (defn db-flow
-  "A continuous flow of database values: the anchor (or (db) when
-  nil), a catch-up (db), then :db-after of every report (filtered by
+  "A continuous flow of database values: the anchor exactly as given,
+  a catch-up (db), then :db-after of every report (filtered by
   `relevant?` when given). Latest-wins under load (m/relieve) — a
   live query only ever needs the newest db."
   [{:keys [db reports]} anchor relevant?]
   (m/relieve {}
-             (m/ap (m/amb (or anchor (db))
+             (m/ap (m/amb anchor
                           (db)
                           (:db-after (m/?> (if relevant?
                                              (m/eduction (filter relevant?) reports)
@@ -81,11 +83,11 @@
 
 (defn live
   "Lift a pure query fn `f` (db → data) into the standard read-endpoint
-  flow, anchored at `anchor` (a database value, or nil for the current
-  db): starts from the anchor with an immediate catch-up to the
-  current db — latest-wins, so consumers see the freshest answer and
-  never anything older than the anchor — then (f db-after) per
-  relevant report, deduplicated with =.
+  flow, anchored at `anchor` (passed to f exactly as given): starts
+  from the anchor with an immediate catch-up to the current db —
+  latest-wins, so consumers see the freshest answer and never
+  anything older than the anchor — then (f db-after) per relevant
+  report, deduplicated with =.
 
   For a fixed as-of view, skip the flow: call (f db-value) directly.
 

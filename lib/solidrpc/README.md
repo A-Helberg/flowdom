@@ -51,14 +51,9 @@ SSE is server-to-client only. If you need low-latency client-to-server messaging
 
 ### The serialization boundary
 
-A db value cannot ship its data, so `solidrpc.transit` exchanges it at the wire:
+`solidrpc.transit` provides the general mechanism: **server values, client refs, exchanged at the wire.** Register how a value type is named going out (value → rep) and reconstructed coming in (rep → value); application code on the server passes real values around, and the client holds opaque refs it treats as plain data. `nil` crosses unchanged and carries no meaning at this layer — handlers dispatch on type and tag, so nil never reaches one. What a missing value means (now? anonymous? an error?) is your domain's decision, made in your endpoint fns and handler reps where it's visible.
 
-- server → wire: a db value serializes as a ref — `#solid/db {:basis-t 1010}` (an app-registered write handler; a basis-t is all a peer needs)
-- wire → client: the ref reads as an opaque `DbRef` record — components pass it around like any value
-- wire → server: an app-registered read handler resolves the ref back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs
-- `nil` crosses unchanged and means "now"
-
-That registration is the middleware: resolution happens at the transit boundary and application code never sees it:
+The db value is the first registered instance. A db cannot ship its data, so its wire form is `#solid/db {:basis-t 1010}` — a basis-t is all a peer needs — and the incoming ref resolves back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs. Handlers that only need startup-time context (here: the conn) go in the registry once:
 
 ```clojure
 (transit/register-write-handler! datomic.db.Db transit/db-tag
@@ -70,9 +65,29 @@ That registration is the middleware: resolution happens at the transit boundary 
 
 The server does not restrict which t a client may name. The trust boundary is the query fn — authorize against the *present*, read domain data at t — a ref is usually a re-observation of answers the client was already served, and data that must not be readable at *any* t is excision's job.
 
+### Request-scoped handlers
+
+Some value types can only be reconstructed with the request in hand — a "current user" from a session, whatever the session mechanism is. Those handlers are supplied where you mount the rpc handlers: your router fn has the request in scope, so the decoder is a plain closure over it. solidrpc never learns whether that means a JWT, a server-side session store, or a db lookup:
+
+```clojure
+["/api/query"
+ {:get (fn [req]
+         (rpc/handle-query req
+           {:read-handlers
+            {"myapp/user" (fn [rep]
+                            (sessions/user-for
+                             (get-in req [:cookies "sid" :value]) rep))}}))}]
+```
+
+`handle-command` takes the same opts. `:write-handlers` (`{type {:tag … :rep …}}`) covers the outgoing direction and rides the SSE stream's closures, so per-request encoding holds for the connection's lifetime. Per-call handlers merge over the registry and never touch it.
+
+A rejecting handler signals its status through ex-data — `(throw (ex-info "no session" {:solidrpc/status 401}))` — and the response carries it, so consumers can tell an invalid session from a server error.
+
+One consequence to design for: decode runs once per request, and an SSE connection can be long-lived. Reconstruct **identity** at the edge and derive **authorization** from the db inside the query fn — `(fn [db] (visible-notes db (d/entity db user-id)))` re-reads roles from every `db-after`, so open streams tighten on the transaction that revokes, not at reconnect.
+
 ### Anchors
 
-`live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the current db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. `nil` anchors to now.
+`live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the current db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. `live` passes the anchor to `f` exactly as given — nil included; a facade whose convention is "nil means now" substitutes the current db itself before calling.
 
 **A fixed point in time needs no flow at all.** An as-of view is an immutable value, so "the answer at t" is plain function application: `(all-notes (d/as-of db t))`. Render against a fixed value and nothing ever updates — which is what SSR and JVM test fixtures consume.
 
@@ -108,7 +123,8 @@ The api namespace colocates the pure fn with its `<`-suffixed facade, registered
    (defn all-notes [db] ...))          ;; pure — call it with any as-of view
 
 (defn all-notes< [db]                  ;; < says flow; db is the anchor
-  #?(:clj  (live/live store/env db all-notes :relevant? note-tx?)
+  #?(:clj  (live/live store/env (or db ((:db store/env)))   ;; facade convention: nil means now
+                      all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))
 ```
 

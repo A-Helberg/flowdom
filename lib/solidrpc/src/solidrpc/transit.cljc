@@ -1,8 +1,18 @@
 (ns solidrpc.transit
   "Transit encode/decode for the wire, with an extension point for
-  app-registered handlers.
+  app-registered handlers: server values, client refs, exchanged at
+  the serialization boundary.
 
-  The main use: database values. A database is a value; its wire
+  Handlers come in two scopes. Request-independent ones (anything
+  reconstructible from startup context, like a db resolver closing
+  over the conn) go in the registry via register-read-handler! /
+  register-write-handler!. Request-dependent ones (a user from a
+  session, however sessions work) are supplied per call through the
+  :handlers opt on read/write — solidrpc.server threads them from the
+  opts you pass at the rpc mount point, where your router fn has the
+  request in scope to close over.
+
+  The main use so far: database values. A database is a value; its wire
   form is a tiny ref — #solid/db {:basis-t 1010} — because a basis-t
   is all a peer needs to reconstitute the value. The exchange happens
   HERE, at the serialization boundary, so it is invisible to
@@ -18,8 +28,13 @@
     back to an ACTUAL db value (d/as-of), so endpoint fns receive
     databases, never refs
 
-  nil crosses unchanged and means 'now' by convention — the consumer
-  (solidrpc.live) resolves a nil anchor to the current db.
+  nil crosses unchanged, and no meaning is assigned to it here — write
+  handlers dispatch on type and read handlers on tag, so nil never
+  reaches a handler. What a missing value means is the consumer's
+  decision, made where it is visible: a facade may substitute the
+  current db for a nil anchor, a resolver may treat {:basis-t nil} as
+  now, another domain may reject nil outright — all consumer-side
+  choices, none imposed by this namespace.
 
   Without app registration the default read handler on both platforms
   yields the DbRef record itself, so the lib works standalone."
@@ -69,19 +84,60 @@
   #?(:cljs (rebuild-cljs!))
   nil)
 
-(defn write [data]
-  #?(:clj  (let [out (ByteArrayOutputStream.)
-                 w   (t/writer out :json {:handlers @write-handlers*})]
-             (t/write w data)
-             (.toString out "UTF-8"))
-     :cljs (do (when (nil? @writer*) (rebuild-cljs!))
-               (t/write @writer* data))))
+(defn- read-handler-map
+  "The registry, with per-call `handlers` ({tag (fn [rep] …)}) merged
+  on top. Per-call handlers win on tag collision and never touch the
+  registry."
+  [handlers]
+  (if (seq handlers)
+    (merge @read-handlers*
+           (into {} (map (fn [[tag f]] [tag (t/read-handler f)])) handlers))
+    @read-handlers*))
 
-(defn read [s]
-  #?(:clj  (t/read (t/reader (if (string? s)
-                               (ByteArrayInputStream. (.getBytes ^String s "UTF-8"))
-                               s)
-                             :json
-                             {:handlers @read-handlers*}))
-     :cljs (do (when (nil? @reader*) (rebuild-cljs!))
-               (t/read @reader* s))))
+(defn- write-handler-map
+  "The registry, with per-call `handlers`
+  ({type {:tag \"…\" :rep (fn [v] …)}}) merged on top."
+  [handlers]
+  (if (seq handlers)
+    (merge @write-handlers*
+           (into {} (map (fn [[type {:keys [tag rep]}]]
+                           ;; force invocation: transit treats a non-fn
+                           ;; rep as a constant, which would silently
+                           ;; write keywords like :sid literally
+                           [type (t/write-handler (fn [_] tag) (fn [v] (rep v)))]))
+                 handlers))
+    @write-handlers*))
+
+(defn write
+  "Encode `data`. Opts:
+    :handlers  {type {:tag \"…\" :rep (fn [v] …)}} — per-call write
+               handlers, merged over the registry. Supply these at the
+               rpc mount point for request-scoped encoding."
+  ([data] (write data nil))
+  ([data {:keys [handlers]}]
+   #?(:clj  (let [out (ByteArrayOutputStream.)
+                  w   (t/writer out :json {:handlers (write-handler-map handlers)})]
+              (t/write w data)
+              (.toString out "UTF-8"))
+      :cljs (if (seq handlers)
+              (t/write (t/writer :json {:handlers (write-handler-map handlers)}) data)
+              (do (when (nil? @writer*) (rebuild-cljs!))
+                  (t/write @writer* data))))))
+
+(defn read
+  "Decode `s`. Opts:
+    :handlers  {tag (fn [rep] …)} — per-call read handlers, merged
+               over the registry. Supply these at the rpc mount point,
+               closing over the request (session lookup, verification,
+               whatever reconstruction means for that value type)."
+  ([s] (read s nil))
+  ([s {:keys [handlers]}]
+   #?(:clj  (t/read (t/reader (if (string? s)
+                                (ByteArrayInputStream. (.getBytes ^String s "UTF-8"))
+                                s)
+                              :json
+                              {:handlers (read-handler-map handlers)}))
+      :cljs (if (seq handlers)
+              (t/read (t/reader :json {:handlers (read-handler-map handlers)}) s)
+              (do (when (nil? @reader*) (rebuild-cljs!))
+                  (t/read @reader* s))))))

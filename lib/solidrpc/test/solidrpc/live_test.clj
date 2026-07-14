@@ -42,14 +42,30 @@
 
 ;; ---------------------------------------------------------------------------
 
-(deftest nil-anchor-means-now
+(deftest anchor-at-now
   (let [{:keys [env transact!]} (fake-store)
-        {:keys [out cancel]} (run-flow! (live/live env nil :notes))]
+        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) :notes))]
     (is (= [[]] @out) "current answer at subscribe")
     (transact! #(add-note % "a") [[:note "a"]])
     (is (= [[] ["a"]] @out))
     (transact! #(add-note % "b") [[:note "b"]])
     (is (= [[] ["a"] ["a" "b"]] @out))
+    (cancel)))
+
+(deftest nil-anchor-passes-through-untouched
+  ;; live is not slot-aware: the anchor is not inspected or coerced,
+  ;; nil included. Coercing nil to 'now' would read (:db env) a second
+  ;; time (substitute + catch-up); passthrough reads it exactly once.
+  ;; (The anchor emission itself is unobservable here — latest-wins
+  ;; supersedes it with the catch-up before a synchronous consumer
+  ;; transfers, same as the stale-anchor case above.) A facade whose
+  ;; convention is 'nil means now' substitutes before calling.
+  (let [{:keys [env]} (fake-store)
+        db-calls (atom 0)
+        env      (update env :db (fn [f] (fn [] (swap! db-calls inc) (f))))
+        {:keys [out cancel]} (run-flow! (live/live env nil :notes))]
+    (is (= 1 @db-calls) "only the catch-up read — no nil coercion")
+    (is (= [[]] @out) "the catch-up answer is what a consumer sees")
     (cancel)))
 
 (deftest fresh-anchor-emits-once
@@ -88,7 +104,7 @@
   (let [{:keys [env transact!]} (fake-store)
         calls (atom 0)
         notes-q (fn [db] (swap! calls inc) (:notes db))
-        {:keys [out cancel]} (run-flow! (live/live env nil notes-q))]
+        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) notes-q))]
     (is (= [[]] @out))
     (is (= 1 @calls) "anchor + catch-up collapse to one db under latest-wins")
     ;; a transaction that changes the db but NOT this query's answer
@@ -104,7 +120,7 @@
         calls (atom 0)
         notes-q (fn [db] (swap! calls inc) (:notes db))
         note-tx? (fn [report] (some #(= :note (first %)) (:tx-data report)))
-        {:keys [out cancel]} (run-flow! (live/live env nil notes-q :relevant? note-tx?))]
+        {:keys [out cancel]} (run-flow! (live/live env ((:db env)) notes-q :relevant? note-tx?))]
     (let [calls-at-start @calls]
       (transact! #(assoc % :pings 1) [[:ping 1]])
       (is (= calls-at-start @calls) "irrelevant tx: query not re-run at all")
@@ -116,7 +132,7 @@
 
 (deftest cancellation-releases-the-report-subscription
   (let [{:keys [env emit*]} (fake-store)
-        {:keys [cancel]} (run-flow! (live/live env nil :notes))]
+        {:keys [cancel]} (run-flow! (live/live env ((:db env)) :notes))]
     (is (some? @emit*) "live flow subscribed to reports")
     (cancel)
     (is (nil? @emit*) "cancel released the m/observe subscription")))
