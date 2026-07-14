@@ -1,5 +1,5 @@
 (ns api.server-info
-  "How long has the server been up? A second ref-passable value type,
+  "How long has the server been up? A second token-passable value type,
   next to api.viewer: same mechanism, different closure. The viewer's
   handler closes over the request; this one closes over server
   startup state (see server.core). The only difference between a
@@ -12,10 +12,10 @@
 
 (def tag "app/server-info")
 
-(defn server-info-ref
+(defn server-info-token
   "The marker the client passes."
   []
-  (transit/ref tag))
+  (transit/token tag))
 
 (defn server-info<
   "One emission: startup instant and uptime — reconstructed at

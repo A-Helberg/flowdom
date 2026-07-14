@@ -7,9 +7,9 @@
   hand it, then a fresh answer whenever a transaction changes it.
   Server code passes real db values around (on a Datomic peer they
   are cheap); when a value crosses the wire, solidrpc.transit
-  serializes it as a ref (#solid/db {:basis-t t}) and deserializes it
+  serializes it as a token (#solid/db {:basis-t t}) and deserializes it
   back into an actual value on the way in — the exchange is invisible
-  to application code. Clients hold opaque generic Refs and pass them
+  to application code. Clients hold opaque generic tokens and pass them
   like any other value.
 
   The reports< flow

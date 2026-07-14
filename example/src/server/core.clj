@@ -41,7 +41,7 @@
    :body    (slurp (clojure.java.io/resource "public/index.html"))})
 
 ;; The mount point is the app's whole value vocabulary, per request:
-;; every ref tag the wire speaks and how it reconstructs, in one map.
+;; every token tag the wire speaks and how it reconstructs, in one map.
 ;; Three closures, three lifetimes, one mechanism: server.notes
 ;; contributes the db handlers (over the conn), server-info closes
 ;; over the startup instant, and the viewer closes over THIS request.

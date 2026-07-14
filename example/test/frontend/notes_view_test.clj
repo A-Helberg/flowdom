@@ -92,7 +92,7 @@
         (is (some #{before-anchor} names))
         (is (some #{after-anchor} names) "caught up past the anchor")))))
 
-(deftest db-value-round-trips-the-wire-as-a-ref
+(deftest db-value-round-trips-the-wire-as-a-token
   ;; the transit boundary: value → #solid/db {:basis-t t} → value,
   ;; using the same handler maps server.core supplies at the mount
   ;; point — with a real Datomic db value.
@@ -100,8 +100,8 @@
         wire (transit/write db0 {:handlers (:write-handlers store/transit-handlers)})]
     (is (re-find #"solid/db" wire))
     (is (not (re-find #"hello from datomic" wire)) "no domain data crosses")
-    (testing "without a resolver, the client's view: a generic ref"
-      (is (= (transit/ref transit/db-tag {:basis-t (d/basis-t db0)})
+    (testing "without a resolver, the client's view: a generic token"
+      (is (= (transit/token transit/db-tag {:basis-t (d/basis-t db0)})
              (transit/read wire))))
     (let [restored (transit/read wire {:handlers (:read-handlers store/transit-handlers)})]
       (is (= (d/basis-t db0) (d/basis-t restored)))
@@ -114,17 +114,17 @@
           db1  (notes/add-note! note)]
       (is (some #{note} (notes/all-notes db1))
           "read-your-writes: the returned value already contains the write")))
-  (testing "over the wire: the value leaves as a ref (the write handler)"
+  (testing "over the wire: the value leaves as a token (the write handler)"
     (let [note (str "ryw-wire-" (gensym))
           resp (core/command-handler
                 {:body (java.io.StringReader.
                         (transit/write {:fn-name 'api.notes/add-note!
                                         :args    [note]}))})
-          body (transit/read (:body resp))]   ;; no read handlers: a generic ref
+          body (transit/read (:body resp))]   ;; no read handlers: a generic token
       (is (= 200 (:status resp)))
-      (is (transit/ref? (:result body)))
-      (is (= transit/db-tag (transit/ref-tag (:result body))))
-      (is (pos? (:basis-t (transit/ref-rep (:result body))))
+      (is (transit/token? (:result body)))
+      (is (= transit/db-tag (transit/token-tag (:result body))))
+      (is (pos? (:basis-t (transit/token-rep (:result body))))
           "a basis-t is all that crossed"))))
 
 (deftest dispose-freezes-the-tree-and-releases-the-flow

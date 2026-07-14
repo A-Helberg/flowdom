@@ -33,8 +33,8 @@
     (is (vector? hiccup))
     (is (= :div (first hiccup)))))
 
-(deftest marker-ref-facades-are-lazy-flows
-  ;; markers are generic refs — plain data, no registration; the
+(deftest marker-token-facades-are-lazy-flows
+  ;; markers are generic tokens — plain data, no registration; the
   ;; flows are recipes — no connection until something subscribes
-  (is (fn? (viewer/whoami< (viewer/viewer-ref))))
-  (is (fn? (info/server-info< (info/server-info-ref)))))
+  (is (fn? (viewer/whoami< (viewer/viewer-token))))
+  (is (fn? (info/server-info< (info/server-info-token)))))

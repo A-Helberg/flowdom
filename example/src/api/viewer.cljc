@@ -1,6 +1,6 @@
 (ns api.viewer
   "Who is asking? A request-scoped value type. The client passes a
-  generic ref marker; the read handler at the mount point
+  generic marker token; the read handler at the mount point
   (server.core) reconstructs the viewer from the request itself — the
   only identity a bare request has: address and user agent. A real
   app reconstructs its current user here instead — cookie → session
@@ -8,8 +8,8 @@
   care which.
 
   Same convention as db anchors: values on the server (tests and
-  in-process callers pass the viewer map directly), refs on the
-  client. The marker needs no registration anywhere — a generic ref
+  in-process callers pass the viewer map directly), tokens on the
+  client. The marker needs no registration anywhere — a generic token
   writes under its own tag."
   (:require [missionary.core :as m]
             [solidrpc.transit :as transit]
@@ -17,10 +17,10 @@
 
 (def tag "app/viewer")
 
-(defn viewer-ref
+(defn viewer-token
   "The marker the client passes."
   []
-  (transit/ref tag))
+  (transit/token tag))
 
 (defn whoami<
   "One emission: the viewer, as reconstructed by the server."

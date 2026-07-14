@@ -37,12 +37,7 @@
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-by-hand :as live-by-hand]
-            [frontend.examples.live-notes :as live-notes]
-            ;; compiled into the app (not just inlined as source) so
-            ;; the server-values page's try-it-from-the-console
-            ;; instruction works when running full-stack
-            [api.server-info]
-            [api.viewer]))
+            [frontend.examples.live-notes :as live-notes]))
 
 (def sections
   [{:title "Introduction"
@@ -718,12 +713,12 @@
                (m/?> tx-reports))))"]
        [:p "The head reads the db at spawn — a flow is a recipe, so "
         "every subscriber gets its own read, current as of the last "
-        "commit — and it carries no datoms: a sample of the "
-        "present, not news. Replaying the last real report would be "
-        "the obvious alternative, and it is subtly wrong: the lazy "
-        "listener only processes reports while someone is "
-        "subscribed, so a remembered report can be older than the "
-        "state a subscriber already holds."]
+        "commit — and it carries no datoms, because it describes "
+        "current state rather than a transaction. Replaying the "
+        "last real report would be the obvious alternative, and it "
+        "is subtly wrong: the lazy listener only processes reports "
+        "while someone is subscribed, so a remembered report can be "
+        "older than the state a subscriber already holds."]
        [:p "The demo below watches the feed. A tx-report flow is a "
         "server flow like any other, so it reaches the browser "
         "exactly as the queries page taught — an api namespace "
@@ -847,11 +842,18 @@
 (defn all-notes< [db]
   #?(:clj  (live/live store/tx-reports< db all-notes :relevant? note-tx?)
      :cljs (call/query `all-notes< db)))"]
-       [:p "The facade also gained an argument: " [:code "live"]
-        " starts from the db you hand it — the " [:strong "anchor"]
-        ", a floor under everything the flow shows — and "
-        [:code "nil"] " means no floor: the head already supplies "
-        "the present, so 'now' needs nothing from the caller."]
+       [:p [:code "all-notes<"] " also takes a db argument: the "
+        [:strong "anchor"] ". Use it when the client already holds "
+        "a database value — for example, " [:code "add-note!"]
+        " returns the database that contains the new note. Passing "
+        "that database to " [:code "all-notes<"] " makes the flow "
+        "compute its first answer from it, then catch up to the "
+        "current database. This guarantees the subscriber never "
+        "sees an answer computed from a database older than the "
+        "anchor: read-your-writes. Two queries given the same "
+        "anchor start from the same database. Passing "
+        [:code "nil"] " means no anchor; the first answer comes "
+        "from the head's current db."]
        [:p "The one flow is also the design's real requirement: "
         [:em "value semantics"] " — reports carry the new database "
         "as an immutable value. The queries page's atom qualifies ("
@@ -896,9 +898,8 @@
         "can't hold a database value — so what does the client "
         "actually receive, and what does it pass back as an anchor? "
         "Whatever it is, it has to do everything the value did: give "
-        "queries on one page a common starting point, hand a test or "
-        "an SSR render 'this exact state', and cost almost nothing "
-        "to carry."]]
+        "queries on one page a common starting point, hand a test "
+        "'this exact state', and cost almost nothing to carry."]]
       :examples
       [{:source    (rc/inline "frontend/examples/live_notes.cljs")
         :component live-notes/example}]}
@@ -926,33 +927,35 @@
         "hidden input back into every fn you just made pure: tests "
         "need the machinery again, and the fn's signature stops "
         "telling the truth."]
-       [:h2 "Refs"]
+       [:h2 "Tokens"]
        [:p "The way out is the move the db already made on the "
         "previous page, generalized: the client doesn't need the "
         "value — components never look inside it, they only pass it "
         "to reads. So the client passes a " [:em "name"] " for it — "
-        "a ref, plain data — and at the serialization boundary the "
-        "server exchanges the name for the real value. The endpoint "
-        "fn receives an ordinary argument and stays pure: the same "
-        "fn is called with a real value in-process (JVM tests "
+        "a " [:strong "tagged token"] ", plain data: a tag naming "
+        "the value type, a rep carrying what the server needs to "
+        "rebuild it — and at the serialization boundary the server "
+        "exchanges the token for the real value. The endpoint fn "
+        "receives an ordinary argument and stays pure: the same fn "
+        "is called with a real value in-process (JVM tests "
         "construct a user map, no auth machinery anywhere) and "
         "reconstructs one at the wire. And because reconstruction "
         "happens server-side — from your session store, a JWT, a db "
         "read; solidrpc never knows — the client can't forge what it "
-        "never builds. A marker ref carries nothing at all."]
-       [:p "For the db, the name is a basis-t: a database value "
+        "never builds. A marker token carries nothing at all."]
+       [:p "For the db, the rep is a basis-t: a database value "
         "leaves the server as " [:code "#solid/db {:basis-t 1010}"]
         " and comes back as an " [:em "actual database value"]
         " via " [:code "d/as-of"] ". That closes every gap the "
-        "previous page listed. The client passes the ref as "
+        "previous page listed. The client passes the token as "
         [:code "all-notes<"] "'s db argument and the flow starts "
-        "from " [:em "that"] " database — a floor it immediately "
-        "catches up from, so you never see anything older than what "
-        "you hold. Queries handed the same ref share a starting "
-        "point; a command that returns the post-transaction db "
-        "(below) hands the client read-your-writes with no cache to "
-        "patch; and a test or SSR render given a ref is given an "
-        "exact, reproducible state."]
+        "from " [:em "that"] " database — the anchor from the "
+        "previous page — and immediately catches up, so you never "
+        "see anything older than what you hold. Queries given the "
+        "same token share a starting point; a command that returns "
+        "the post-transaction db (below) gives the client "
+        "read-your-writes with no cache to patch; and a test given "
+        "a token is given an exact, reproducible state."]
        [:h2 "Read handlers"]
        [:p "Concretely, a value type is a tag, a marker, a facade — "
         "one cljc file:"]
@@ -960,17 +963,17 @@
         ";; api.server-info
 (def tag \"app/server-info\")
 
-(defn server-info-ref [] (transit/ref tag))
+(defn server-info-token [] (transit/token tag))
 
 (defn server-info< [info]
   #?(:clj  (m/ap info)                       ;; in-process: info IS the value
-     :cljs (call/query `server-info< info))) ;; wire: info is the marker ref"]
+     :cljs (call/query `server-info< info))) ;; wire: info is the marker token"]
        [:p "Plus one read handler where you mount the rpc handlers. "
         "The contract: " [:code ":read-handlers"] " maps a tag "
         "to " [:code "(fn [on-the-wire-value] value)"] " — it runs "
-        "while the incoming args decode, receives what the ref "
-        "carried over the wire (transit calls this the rep; a bare "
-        "marker carries " [:code "{}"] ", which is why the fns below "
+        "while the incoming args decode, receives what the token "
+        "carried over the wire (its rep; a bare marker carries "
+        [:code "{}"] ", which is why the fns below "
         "ignore it), and whatever it returns "
         [:em "becomes the argument"]
         " the endpoint fn receives. The canonical value type here is "
@@ -997,11 +1000,11 @@
        [:p "In a view, a server value reads like anything else — "
         "hold it at point of use:"]
        [ui/code-block
-        "(let [info< (sm/hold (server-info< (server-info-ref)) :initial nil)]
+        "(let [info< (sm/hold (server-info< (server-info-token)) :initial nil)]
   [:p \"up \" (fn [] (some-> @info< :uptime-ms)) \" ms\"])
 
 ;; the round trip:
-;;   view      (server-info-ref)          a marker, plain data
+;;   view      (server-info-token)          a marker token, plain data
 ;;   wire out  [\"~#app/server-info\",[\"^ \"]]
 ;;   decode    the read handler for the tag runs; its return value
 ;;             becomes the argument server-info< receives
@@ -1014,9 +1017,9 @@
         "type, since the server holds real values — to "
         [:code "{:tag … :rep (fn [value] on-the-wire-value)}"] ". "
         "The worked case is the db: let a command return the "
-        "post-transaction database, and the client receives a ref it "
-        "can anchor its next read with — the read-your-writes the "
-        "previous page promised, with no cache to patch."]
+        "post-transaction database, and the client receives a token "
+        "it can anchor its next read with — the read-your-writes "
+        "the previous page promised, with no cache to patch."]
        [ui/code-block
         ";; the write direction: a command returns the post-tx db
 (defn add-note! [text]
@@ -1028,13 +1031,30 @@
      {datomic.db.Db {:tag \"solid/db\"
                      :rep (fn [db] {:basis-t (d/basis-t db)})}}}))
 
-;; the client gets #solid/db {:basis-t t} — a ref like any other —
+;; the client gets #solid/db {:basis-t t} — a token like any other —
 ;; and anchors its next read with it
 (-> (add-note! \"buy milk\")
     (.then (fn [db] (reset! current-db db))))"]
+       [:p "Note that both handler maps are server-side. The client "
+        "decodes and encodes these tags with no handlers at all: "
+        "solidrpc's transit layer has one default — a tag it has no "
+        "read handler for decodes to a generic token, a pair of tag "
+        "and rep with value equality, and a token encodes back out "
+        "under its own tag. So " [:code "#solid/db {:basis-t 1010}"]
+        " arrives in the browser as plain data, and when the client "
+        "passes it back as an argument it leaves unchanged; only "
+        "the server's read handler for that tag ever looks inside. "
+        "This is deliberate, not a missing feature: a client that "
+        "never interprets a token can't grow a dependency on the "
+        "rep's contents — the server can change what a tag carries "
+        "without touching any client — and meaning is only ever "
+        "assigned server-side, where the trust boundary is. It also "
+        "means adding a value type adds no frontend code: the "
+        "handlers live at the server's mount point, and the marker "
+        "constructor is one line in the cljc file."]
        [:h2 "Authorization"]
        [:p "Two conventions complete the picture. A handler that "
-        "rejects — no session, expired token — throws "
+        "rejects — no session, expired credentials — throws "
         [:code "(ex-info \"no session\" {:solidrpc/status 401})"]
         " and the response carries that status, so clients can tell "
         "an invalid session from a server error. And because decode "
@@ -1048,15 +1068,9 @@
         "doesn't need to. The wire still only carries "
         "endpoint-shaped results; the trust boundary is the query fn "
         "(authorize against the present, read domain data at t); a "
-        "ref is usually a re-observation of answers the client was "
+        "token is usually a re-observation of answers the client was "
         "already served; and data that must not be readable at "
-        [:em "any"] " t is excision's job."]
-       [:p "Both value types are real in the example app "
-        "(api.server-info, api.viewer, mounted in server.core) with "
-        "JVM tests that drive the mount handler with fake requests — "
-        "run " [:code "task test-jvm"] ", or run the app full-stack "
-        "and call " [:code "(whoami< (viewer-ref))"] " or "
-        [:code "(server-info< (server-info-ref))"] " from the browser."]]}]}
+        [:em "any"] " t is excision's job."]]}]}
 
    {:title "Testing"
     :pages

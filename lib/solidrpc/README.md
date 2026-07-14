@@ -51,9 +51,9 @@ SSE is server-to-client only. If you need low-latency client-to-server messaging
 
 ### The serialization boundary
 
-`solidrpc.transit` provides the general mechanism: **server values, client refs, exchanged at the wire.** There is one handler mechanism — handlers are supplied as opts where you mount the rpc handlers — and the client needs none at all, because refs are generic: a `Ref` record writes out under its own `:tag`, and any incoming tag without a handler reads back as a `Ref`. A server-minted value arrives as `(->Ref "solid/db" {:basis-t 1010})` — plain data, value equality, round-trips — and a client-constructed marker is just `(transit/ref "app/viewer" {})`. `nil` crosses unchanged and carries no meaning at this layer; what a missing value means (now? anonymous? an error?) is your domain's decision, made in your endpoint fns and handler reps where it's visible.
+`solidrpc.transit` provides the general mechanism: **server values, client tokens, exchanged at the wire.** The client passes a tagged token — a tag naming the value type, a rep carrying what the server needs to rebuild it. There is one handler mechanism — handlers are supplied as opts where you mount the rpc handlers — and the client needs none at all, because tokens are generic: a token writes out under its own tag, and any incoming tag without a handler reads back as a token. A server-minted value arrives as `(transit/token "solid/db" {:basis-t 1010})` — plain data, value equality, round-trips — and a client-constructed marker is just `(transit/token "app/viewer")`. `nil` crosses unchanged and carries no meaning at this layer; what a missing value means (now? anonymous? an error?) is your domain's decision, made in your endpoint fns and handler reps where it's visible.
 
-The db value is the worked example. A db cannot ship its data, so its wire form is `#solid/db {:basis-t 1010}` — a basis-t is all a peer needs — and the incoming ref resolves back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs. Handlers that only need startup context are built once, closing over the conn, as plain data:
+The db value is the worked example. A db cannot ship its data, so its wire form is `#solid/db {:basis-t 1010}` — a basis-t is all a peer needs — and the incoming token resolves back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never tokens. Handlers that only need startup context are built once, closing over the conn, as plain data:
 
 ```clojure
 (def transit-handlers
@@ -63,11 +63,11 @@ The db value is the worked example. A db cannot ship its data, so its wire form 
                                    :rep (fn [db] {:basis-t (d/basis-t db)})}}})
 ```
 
-The server does not restrict which t a client may name. The trust boundary is the query fn — authorize against the *present*, read domain data at t — a ref is usually a re-observation of answers the client was already served, and data that must not be readable at *any* t is excision's job.
+The server does not restrict which t a client may name. The trust boundary is the query fn — authorize against the *present*, read domain data at t — a token is usually a re-observation of answers the client was already served, and data that must not be readable at *any* t is excision's job.
 
 ### Handlers at the mount point
 
-Everything above is handed to solidrpc where you mount the handlers. Your router fn has the request in scope, so a value type that can only be reconstructed *with the request* — a current user from a session, whatever the session mechanism is — is a handler closing over it, sitting in the same map as the startup-scoped ones. A read handler runs while the incoming args decode, and its return value becomes the argument the endpoint fn receives in place of the ref. The mount point becomes the app's whole value vocabulary, per request, and solidrpc never learns whether reconstruction means a JWT, a server-side session store, or a db lookup:
+Everything above is handed to solidrpc where you mount the handlers. Your router fn has the request in scope, so a value type that can only be reconstructed *with the request* — a current user from a session, whatever the session mechanism is — is a handler closing over it, sitting in the same map as the startup-scoped ones. A read handler runs while the incoming args decode, and its return value becomes the argument the endpoint fn receives in place of the token. The mount point becomes the app's whole value vocabulary, per request, and solidrpc never learns whether reconstruction means a JWT, a server-side session store, or a db lookup:
 
 ```clojure
 ["/api/query"

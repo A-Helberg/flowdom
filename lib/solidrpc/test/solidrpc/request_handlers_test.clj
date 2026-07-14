@@ -26,10 +26,10 @@
       (f))))
 
 (defn- token
-  ;; the client role: a generic ref, written by the built-in Ref
+  ;; the client role: a generic token, written by the built-in Token
   ;; handler — no client-side registration of any kind
   [sid]
-  (transit/ref "test/user" {:sid sid}))
+  (transit/token "test/user" {:sid sid}))
 
 (defn- query-req [fn-sym & args]
   {:query-params {"q" (transit/write {:fn-name fn-sym :args (vec args)})}})
@@ -52,16 +52,16 @@
 
 (deftest per-call-handlers-with-generic-ref-default
   (testing "a tag without a handler reads as a generic Ref"
-    (let [wire (transit/write (transit/ref transit/db-tag {:basis-t 42}))]
-      (is (= (transit/ref transit/db-tag {:basis-t 42}) (transit/read wire)))
+    (let [wire (transit/write (transit/token transit/db-tag {:basis-t 42}))]
+      (is (= (transit/token transit/db-tag {:basis-t 42}) (transit/read wire)))
       (testing "…and a per-call handler reconstructs the value instead"
         (is (= [:resolved 42]
                (transit/read wire {:handlers {transit/db-tag
                                               (fn [{:keys [basis-t]}] [:resolved basis-t])}}))))))
   (testing "per-call handlers leave other calls untouched"
-    (let [wire (transit/write (transit/ref transit/db-tag {:basis-t 42}))]
+    (let [wire (transit/write (transit/token transit/db-tag {:basis-t 42}))]
       (transit/read wire {:handlers {transit/db-tag (fn [_] :other)}})
-      (is (= (transit/ref transit/db-tag {:basis-t 42}) (transit/read wire))))))
+      (is (= (transit/token transit/db-tag {:basis-t 42}) (transit/read wire))))))
 
 ;; ---------------------------------------------------------------------------
 ;; handle-query

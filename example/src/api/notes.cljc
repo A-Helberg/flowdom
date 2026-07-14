@@ -6,7 +6,7 @@
     with any as-of view: (all-notes (d/as-of db t)) is 'the answer
     at t', no flow required.
   - `all-notes<` lifts it: the `<` says flow. Its db argument is the
-    anchor — a real db value on the JVM, an opaque ref on the
+    anchor — a real db value on the JVM, an opaque token on the
     client (solidrpc.transit exchanges the two at the wire), or nil
     for no floor (the feed's head supplies the present). Hold it at
     point of use: (sm/hold (all-notes< db)).
@@ -46,7 +46,7 @@
      (boolean (some #(contains? note-attrs (d/ident db-after (:a %))) tx-data))))
 
 (defn all-notes<
-  "Flow of every note, anchored at `db` (value / ref / nil). nil
+  "Flow of every note, anchored at `db` (value / token / nil). nil
   means no floor: the feed's head already supplies the present."
   [db]
   #?(:clj  (live/live store/tx-reports< db all-notes :relevant? note-tx?)
@@ -54,7 +54,7 @@
 
 (defn add-note!
   "Command. Returns the post-transaction db — a value in-process, a
-  ref on the client (via a Promise) — so the caller can anchor its
+  token on the client (via a Promise) — so the caller can anchor its
   next read with it for read-your-writes."
   [text]
   #?(:clj  (store/add-note! text)

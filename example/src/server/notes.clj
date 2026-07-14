@@ -5,8 +5,8 @@
 
   This ns also registers the db-as-value transit handlers: a db value
   crossing the wire serializes as #solid/db {:basis-t t}, and an
-  incoming ref deserializes back into an actual db value (as-of), so
-  endpoint fns receive databases, never refs. That registration is
+  incoming token deserializes back into an actual db value (as-of), so
+  endpoint fns receive databases, never tokens. That registration is
   the middleware: resolution happens at the serialization boundary
   and application code never sees it.
 
@@ -45,23 +45,23 @@
 
 (def tx-reports<
   "The feed, consumable: a catch-up head, then every report as it
-  lands. The head is the present — an event feed alone only announces
-  the next change, so a fresh subscriber would otherwise wait for the
-  next write. It reads the db at spawn (a flow is a recipe: every
-  subscriber gets its own read), which keeps it fresh by construction
-  — never older than any anchor minted on this connection — and it
-  carries no datoms: it is a sample, not news."
+  lands. The head carries the current db — an event feed alone only
+  announces the next change, so a fresh subscriber would otherwise
+  wait for the next write. It reads the db at spawn (a flow is a
+  recipe: every subscriber gets its own read), so it is never older
+  than any anchor minted on this connection, and it carries no
+  datoms because it describes current state, not a transaction."
   (m/ap (m/amb {:db-after (d/db conn) :tx-data []}
                (m/?> tx-reports))))
 
 ;; ---------------------------------------------------------------------------
-;; db-as-value ↔ wire ref, at the transit boundary
+;; db-as-value ↔ wire token, at the transit boundary
 ;; ---------------------------------------------------------------------------
 
 (def transit-handlers
   "The db half of the app's value vocabulary, as data — server.core
   merges this into the opts at the rpc mount point. Out: a db value's
-  wire form is its basis-t, nothing else crosses. In: the ref becomes
+  wire form is its basis-t, nothing else crosses. In: the token becomes
   an actual db value again. No clamping — the trust boundary is the
   query fn (authorize against the present, read domain data at t),
   and data that must not be readable at ANY t is excision's job."
@@ -77,7 +77,7 @@
 
 (defn add-note!
   "Returns the post-transaction db value — over the wire it leaves as
-  a ref (the write handler above), so the client can anchor its next
+  a token (the write handler above), so the client can anchor its next
   read with it: read-your-writes, no cache to patch."
   [text]
   (when (seq text)

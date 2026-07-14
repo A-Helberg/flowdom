@@ -63,7 +63,7 @@
      :read-handlers   {tag (fn [rep] …)} — runs while the incoming
                       args decode; the return value becomes the
                       argument the endpoint fn receives in place of
-                      the ref
+                      the token
      :write-handlers  {type {:tag … :rep …}} — per-request transit
                       write handlers for the outgoing stream"
   ([req] (handle-query req nil))

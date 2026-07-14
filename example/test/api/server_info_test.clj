@@ -15,7 +15,7 @@
 
 (deftest server-info-reconstructs-from-startup-state
   (let [req  {:query-params {"q" (transit/write {:fn-name 'api.server-info/server-info<
-                                                 :args    [(info/server-info-ref)]})}}
+                                                 :args    [(info/server-info-token)]})}}
         resp (core/query-handler req)
         data (first-data resp)]
     (is (= 200 (:status resp)))
