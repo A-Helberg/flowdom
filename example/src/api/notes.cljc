@@ -60,3 +60,10 @@
   [text]
   #?(:clj  (store/add-note! text)
      :cljs (call/command `add-note! text)))
+
+(defn ping!
+  "Command: a write that touches no :note/* attribute — shows
+  :relevant? skipping the re-query."
+  []
+  #?(:clj  (store/ping!)
+     :cljs (call/command `ping!)))

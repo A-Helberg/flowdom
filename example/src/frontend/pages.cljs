@@ -756,14 +756,36 @@
         "db in hand, no flows, no server. The new piece: which "
         "databases to run it against. The previous page's feed "
         "answers that — the db as of now, then " [:code ":db-after"]
-        " of every report."]
-       [:p "Read the pipeline in the demo inside out: " [:code "db<"]
-        " emits database values; " [:code "(map all-notes)"] " turns "
-        "each into an answer; " [:code "dedupe"] " drops answers "
-        "equal to the last — so a transaction that can't change the "
-        "result re-runs the query and emits " [:em "nothing"] " (the "
-        "irrelevant-tx button; watch for the absence of a flash). "
-        "Hold the flow and the list is live."]
+        " of every report. Composed in the notes domain's api "
+        "namespace, the whole thing is:"]
+       [ui/code-block
+        "(ns api.notes
+  (:require [missionary.core :as m]
+            #?(:clj  [datomic.api :as d])
+            #?(:clj  [server.notes :as store])
+            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+
+;; the pure part: a function of a database value
+#?(:clj
+   (defn all-notes [db]
+     (->> (d/q '[:find ?e ?text :where [?e :note/text ?text]] db)
+          (sort-by first)
+          (mapv second))))
+
+;; the live part, by hand
+(defn all-notes< []
+  #?(:clj  (let [db< (m/ap (m/amb (d/db store/conn)
+                                  (:db-after (m/?> store/tx-reports))))]
+             (m/eduction (map all-notes) (dedupe) db<))
+     :cljs (rpc/query `all-notes<)))"]
+       [:p "Read the " [:code ":clj"] " branch inside out: "
+        [:code "db<"] " emits database values; "
+        [:code "(map all-notes)"] " turns each into an answer; "
+        [:code "dedupe"] " drops answers equal to the last — so a "
+        "transaction that can't change the result re-runs the query "
+        "and emits " [:em "nothing"] " (the irrelevant-tx button in "
+        "the demo; watch for the absence of a flash). Hold the flow "
+        "and the list is live."]
        [:p "Notice what stayed pure. " [:code "all-notes"] " never "
         "learns about reports or flows. And because database values "
         "are immutable, 'the answer at t' needs no flow at all — "
@@ -792,40 +814,51 @@
         " skips the re-query itself — \"did this transaction touch a "
         [:code ":note/*"] " attribute\" — which matters once queries "
         "are expensive."]
-       [:p "The convention that goes with it: the api namespace "
-        "colocates the pure fn with its " [:code "<"] "-suffixed "
-        "facade, registered under its " [:em "own"] " symbol — the "
-        "client's " [:code "(call/query `all-notes< db)"] " resolves "
-        "to the same var whose " [:code ":clj"] " branch produces the "
-        "flow, so the two sides cannot drift apart. Facades return "
-        "flows; views hold them at point of use. Calling a read runs "
+       [ui/code-block
+        ";; the :clj branch you wrote by hand, packaged
+(defn all-notes< [db]
+  #?(:clj  (live/live store/env (or db ((:db store/env)))
+                      all-notes :relevant? note-tx?)
+     :cljs (call/query `all-notes< db)))"]
+       [:p "The facade also gained an argument: " [:code "live"]
+        " starts from the db you hand it — the " [:strong "anchor"]
+        " — and this facade treats " [:code "nil"] " as 'now'."]
+       [:h2 "The api namespace"]
+       [:p "The convention: the api namespace colocates the pure fn "
+        "with its " [:code "<"] "-suffixed facade, registered under "
+        "its " [:em "own"] " symbol — the client's "
+        [:code "(call/query `all-notes< db)"] " resolves to the same "
+        "var whose " [:code ":clj"] " branch produces the flow, so "
+        "the two sides cannot drift apart. Facades return flows; "
+        "views hold them at point of use. Calling a read runs "
         "nothing — a flow is a recipe, and work starts when a "
         "component renders the hold. The same component runs live in "
         "the browser and renders on the JVM without mocks (see the "
         "Testing section)."]
-       [:p "The demo below runs the " [:strong "real"] " combinator — "
-        [:code "solidrpc.live"] " is cljc, this is the same code the "
-        "server runs — through " [:code "frontend.notes"] ", "
-        [:code "api.notes"] "'s stand-in twin. Both panels are pure "
-        "components — "
-        [:code "[live-panel db]"] " holds the facade's flow, and "
-        [:code "[pinned-panel db]"] " is the previous page's "
-        "function-call-against-a-value, no flow at all; only the "
-        "demo shell with its buttons performs effects."]
-       [:p "Now notice the awkward part. " [:code "all-notes<"]
-        " takes a database — and a browser can't have one. The demo "
-        "only pins as-of views because the fake store lives in the "
-        "browser, values at hand; against a real server the client "
-        "can pass nothing but " [:code "nil"] " (this app's facades "
-        "treat that as 'now') and take whatever arrives. Queries on "
-        "one page get no common starting point, a command can't hand "
-        "back the database that contains its write, and there is no "
-        "way to tell a test or an SSR render 'this exact state'."]
        [:p "The pattern adds one file to your app:"]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The api namespace (api.notes)"]
-        [ui/code-block (rc/inline "api/notes.cljc")]]]
+        [ui/code-block (rc/inline "api/notes.cljc")]]
+       [:p "The demo below runs the " [:strong "real"] " combinator — "
+        [:code "solidrpc.live"] " is cljc, this is the same code the "
+        "server runs. Both panels are pure components — "
+        [:code "[live-panel db]"] " holds the facade's flow, and "
+        [:code "[pinned-panel db]"] " is the previous page's "
+        "function-call-against-a-value, no flow at all; only the "
+        "demo shell with its buttons performs effects. The pin "
+        "button keeps the db " [:code "add-note!"] " hands back: "
+        "the database that contains that write, so the pinned panel "
+        "is read-your-writes, frozen."]
+       [:p "Now notice what crossed a boundary. " [:code "all-notes<"]
+        " takes a database; " [:code "add-note!"] " returns one; the "
+        "demo just passed it around like any argument. But a browser "
+        "can't hold a database value — so what does the client "
+        "actually receive, and what does it pass back as an anchor? "
+        "Whatever it is, it has to do everything the value did: give "
+        "queries on one page a common starting point, hand a test or "
+        "an SSR render 'this exact state', and cost almost nothing "
+        "to carry."]]
       :examples
       [{:source    (rc/inline "frontend/examples/live_notes.cljs")
         :component live-notes/example}]}
@@ -853,6 +886,7 @@
         "hidden input back into every fn you just made pure: tests "
         "need the machinery again, and the fn's signature stops "
         "telling the truth."]
+       [:h2 "Refs"]
        [:p "The way out is the move the db already made on the "
         "previous page, generalized: the client doesn't need the "
         "value — components never look inside it, they only pass it "
@@ -879,9 +913,20 @@
         "(below) hands the client read-your-writes with no cache to "
         "patch; and a test or SSR render given a ref is given an "
         "exact, reproducible state."]
-       [:p "Concretely, a value type is a tag, a marker, a facade, "
-        "and one handler where you mount the rpc handlers. The "
-        "handler contract: " [:code ":read-handlers"] " maps a tag "
+       [:h2 "Read handlers"]
+       [:p "Concretely, a value type is a tag, a marker, a facade — "
+        "one cljc file:"]
+       [ui/code-block
+        ";; api.server-info
+(def tag \"app/server-info\")
+
+(defn server-info-ref [] (transit/ref tag))
+
+(defn server-info< [info]
+  #?(:clj  (m/ap info)                       ;; in-process: info IS the value
+     :cljs (call/query `server-info< info))) ;; wire: info is the marker ref"]
+       [:p "Plus one read handler where you mount the rpc handlers. "
+        "The contract: " [:code ":read-handlers"] " maps a tag "
         "to " [:code "(fn [on-the-wire-value] value)"] " — it runs "
         "while the incoming args decode, receives what the ref "
         "carried over the wire (transit calls this the rep; a bare "
@@ -896,16 +941,7 @@
         [:em "request"] " — which is exactly where your session "
         "lookup goes, with nothing about the shape changing."]
        [ui/code-block
-        ";; the value type: a tag, a marker, a facade — one cljc file
-(def tag \"app/server-info\")
-
-(defn server-info-ref [] (transit/ref tag))
-
-(defn server-info< [info]
-  #?(:clj  (m/ap info)                       ;; in-process: info IS the value
-     :cljs (call/query `server-info< info))) ;; wire: info is the marker ref
-
-;; the mount point: your router fn has the request in scope
+        ";; the mount point: your router fn has the request in scope
 (def started-at (System/currentTimeMillis))
 
 (defn query-handler [req]
@@ -917,10 +953,11 @@
 
       api.viewer/tag                          ;; closes over THIS request
       (fn [_wire-value] {:remote-addr (:remote-addr req)
-                         :user-agent  (get-in req [:headers \"user-agent\"])})}}))
-
-;; in a view (cljs), a read like any other — hold it at point of use
-(let [info< (sm/hold (server-info< (server-info-ref)) :initial nil)]
+                         :user-agent  (get-in req [:headers \"user-agent\"])})}}))"]
+       [:p "In a view, a server value reads like anything else — "
+        "hold it at point of use:"]
+       [ui/code-block
+        "(let [info< (sm/hold (server-info< (server-info-ref)) :initial nil)]
   [:p \"up \" (fn [] (some-> @info< :uptime-ms)) \" ms\"])
 
 ;; the round trip:
@@ -930,6 +967,7 @@
 ;;             becomes the argument server-info< receives
 ;;   endpoint  (server-info< {:started-at … :uptime-ms …})
 ;;   wire in   plain data — the hold updates, the thunk re-runs"]
+       [:h2 "Write handlers"]
        [:p "That covers values coming in. Values also " [:em "leave"]
         ": " [:code ":write-handlers"] " is the outgoing contract, "
         "mapping a " [:em "type"] " — dispatch is by the value's "
@@ -954,6 +992,7 @@
 ;; and anchors its next read with it
 (-> (add-note! \"buy milk\")
     (.then (fn [db] (reset! current-db db))))"]
+       [:h2 "Authorization"]
        [:p "Two conventions complete the picture. A handler that "
         "rejects — no session, expired token — throws "
         [:code "(ex-info \"no session\" {:solidrpc/status 401})"]

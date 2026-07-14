@@ -26,6 +26,7 @@
 ;; branch produces the flow — one name, nothing to drift.
 (registry/register! #'api.notes/all-notes<)
 (registry/register! #'api.notes/add-note!)
+(registry/register! #'api.notes/ping!)
 (registry/register! #'api.server-info/server-info<)
 (registry/register! #'api.viewer/whoami<)
 

@@ -30,6 +30,9 @@
     (let [conn (d/connect uri)]
       @(d/transact conn [{:db/ident       :note/text
                           :db/valueType   :db.type/string
+                          :db/cardinality :db.cardinality/one}
+                         {:db/ident       :app/pings
+                          :db/valueType   :db.type/long
                           :db/cardinality :db.cardinality/one}])
       @(d/transact conn [{:note/text "hello from datomic"}])
       conn)))
@@ -73,3 +76,12 @@
   [text]
   (when (seq text)
     (:db-after @(d/transact conn [{:note/text text}]))))
+
+(defonce ^:private pings (atom 0))
+
+(defn ping!
+  "A write that touches no :note/* attribute — lets demos and REPL
+  sessions show :relevant? skipping the re-query."
+  []
+  @(d/transact conn [{:app/pings (swap! pings inc)}])
+  nil)

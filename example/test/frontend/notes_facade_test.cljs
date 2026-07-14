@@ -3,9 +3,11 @@
   facade returns a FLOW (a recipe), and holding it is still lazy. No
   server, no EventSource, no network in this test; actually
   subscribing needs the real server and is covered by the JVM side
-  (in-process) plus manual full-stack runs. Compiling this ns also
-  keeps the facade's :cljs branch and the cljc notes-view honest in
-  the node-test build."
+  (in-process) plus manual full-stack runs. In cljs builds api.notes
+  resolves to its browser twin (api/notes.cljs), so that twin — and
+  the cljc notes-view on top of it — is what this ns holds to the
+  laziness contract; the real :cljs branch (call/query) is one line,
+  exercised full-stack. The marker facades below are the real cljc."
   (:require [cljs.test :refer-macros [deftest is]]
             [api.notes :as notes]
             [api.server-info :as info]
