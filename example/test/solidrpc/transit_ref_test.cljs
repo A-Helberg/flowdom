@@ -21,4 +21,6 @@
     (let [r (transit/read "[\"~#solid/db\",[\"^ \",\"~:basis-t\",1010]]")]
       (is (transit/ref? r))
       (is (= "solid/db" (transit/ref-tag r)))
-      (is (= 1010 (:basis-t (transit/ref-rep r)))))))
+      (is (= 1010 (:basis-t (transit/ref-rep r))))
+      (is (= 1010 (get-in r [:rep :basis-t]))
+          "lookup paths read the same as the JVM record"))))

@@ -8,6 +8,7 @@
   the node-test build."
   (:require [cljs.test :refer-macros [deftest is]]
             [api.notes :as notes]
+            [api.server-info :as info]
             [api.viewer :as viewer]
             [frontend.notes-view :as nv]
             [solidclj.satom :as satom]
@@ -30,7 +31,8 @@
     (is (vector? hiccup))
     (is (= :div (first hiccup)))))
 
-(deftest viewer-facade-is-a-lazy-flow-over-a-marker-ref
-  ;; the marker is a generic ref — plain data, no registration; the
-  ;; flow is a recipe — no connection until something subscribes
-  (is (fn? (viewer/whoami< (viewer/viewer-ref)))))
+(deftest marker-ref-facades-are-lazy-flows
+  ;; markers are generic refs — plain data, no registration; the
+  ;; flows are recipes — no connection until something subscribes
+  (is (fn? (viewer/whoami< (viewer/viewer-ref))))
+  (is (fn? (info/server-info< (info/server-info-ref)))))

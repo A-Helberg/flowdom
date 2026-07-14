@@ -9,6 +9,7 @@
    ;; Require api namespaces so their vars exist before registration.
    [api.clock]
    [api.notes]
+   [api.server-info]
    [api.viewer]
    [server.notes]))
 
@@ -25,6 +26,7 @@
 ;; branch produces the flow — one name, nothing to drift.
 (registry/register! #'api.notes/all-notes<)
 (registry/register! #'api.notes/add-note!)
+(registry/register! #'api.server-info/server-info<)
 (registry/register! #'api.viewer/whoami<)
 
 ;; ---------------------------------------------------------------------------
@@ -39,11 +41,19 @@
 
 ;; The mount point is the app's whole value vocabulary, per request:
 ;; every ref tag the wire speaks and how it reconstructs, in one map.
-;; server.notes contributes the db handlers (closures over the conn,
-;; built once); the viewer handler is a closure over THIS request —
-;; that's the only difference between them. A real app resolves its
-;; current user here — swap the body for a session-store lookup or a
-;; token verification; the shape doesn't change.
+;; Three closures, three lifetimes, one mechanism: server.notes
+;; contributes the db handlers (over the conn), server-info closes
+;; over the startup instant, and the viewer closes over THIS request.
+;; A real app resolves its current user like the viewer — swap the
+;; body for a session-store lookup or a token verification; the shape
+;; doesn't change.
+
+(defonce ^:private started-at (System/currentTimeMillis))
+
+(def ^:private startup-read-handlers
+  {api.server-info/tag (fn [_rep]
+                         {:started-at started-at
+                          :uptime-ms  (- (System/currentTimeMillis) started-at)})})
 
 (defn- viewer-from [req]
   (fn [_rep]
@@ -52,7 +62,9 @@
 
 (defn- rpc-opts [req]
   (update server.notes/transit-handlers
-          :read-handlers assoc api.viewer/tag (viewer-from req)))
+          :read-handlers merge
+          startup-read-handlers
+          {api.viewer/tag (viewer-from req)}))
 
 (defn query-handler [req]
   (solidrpc/handle-query req (rpc-opts req)))

@@ -41,7 +41,9 @@
 
 ;; transit-cljs extends IEquiv onto its UUID/Long types but not
 ;; TaggedValue; refs need value equality (follow-args dedupes args
-;; with =), so we extend it here.
+;; with =), so we extend it here. ILookup mirrors the JVM record's
+;; keys, so (get-in r [:rep :basis-t]) reads the same on both
+;; platforms.
 #?(:cljs
    (extend-type ty/TaggedValue
      IEquiv
@@ -51,6 +53,14 @@
             (= (.-rep this) (.-rep ^js other))))
      IHash
      (-hash [this] (hash [(.-tag this) (.-rep this)]))
+     ILookup
+     (-lookup
+       ([this k] (-lookup this k nil))
+       ([this k not-found]
+        (case k
+          :tag (.-tag this)
+          :rep (.-rep this)
+          not-found)))
      IPrintWithWriter
      (-pr-writer [this writer _opts]
        (-write writer (str "#solidrpc/ref [" (.-tag this) " "
