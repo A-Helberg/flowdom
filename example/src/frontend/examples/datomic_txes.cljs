@@ -5,6 +5,9 @@
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 
+;; fd stands in for the conn + report queue on this serverless site;
+;; fd/reports has the same shape as (m/stream (tx-report-flow conn))
+
 ;; the raw report feed, accumulated with m/reductions — every
 ;; transaction, as it lands
 (defonce feed

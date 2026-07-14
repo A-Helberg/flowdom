@@ -5,6 +5,8 @@
             [solidclj.missionary :as sm]
             [solidclj.docs.ui :as ui]))
 
+;; fd stands in for the conn + report queue, as on the previous page
+
 ;; the pure part: a function of a database value — testable with any
 ;; db in hand, no flows, no server
 (defn- all-notes [db]

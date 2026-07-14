@@ -541,12 +541,12 @@
         "the " [:code ":cljs"] " branch delegates to solidrpc. Both "
         "sides just call " [:code "(chat/messages)"] " — the rpc "
         "plumbing lives in one file."]
-       [:p "This site is static — there is no server. "
-        [:code "frontend.chat"] "'s cljs "
-        "branch talks to a stand-in with the real query/command "
-        "signatures: the same atom-backed model, with a sleep "
-        "playing the network. What the fake skips is only the "
-        "transport — the SSE wire and its diffs."]
+       [:p "This site is static — there is no server, on this page "
+        "or any that follows. Demos in this section run against "
+        "browser stand-ins with the real signatures (here, the same "
+        "atom-backed model with a sleep playing the network); the "
+        "server code shown is the real thing. That's the disclaimer, "
+        "once — the pages ahead won't repeat it."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The api namespace (frontend.chat)"]
@@ -584,14 +584,10 @@
         "first subscriber arrives and detaches when the last one "
         "leaves. The demo below is just the feed: press the buttons "
         "and watch reports land."]
-       [:p "No JVM on this static site. "
-        "The demo below runs the same pipeline against a "
-        "browser stand-in — a map plays the database, an atom watch "
-        "plays the queue. The real thing, including the manifold "
-        "bridge that serves it over solidrpc, is in the two server "
-        "files below; run the example app full-stack and "
-        [:code "(server.notes/add-note! \"hi\")"] " from a REPL pushes "
-        "to every connected browser."]
+       [:p "Run the example app full-stack and "
+        [:code "(server.notes/add-note! \"hi\")"] " from a REPL "
+        "pushes to every connected browser; the listener and its "
+        "solidrpc wiring are the two files below."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The listener (server.tx-listener)"]
@@ -599,11 +595,7 @@
        [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "Wired into solidrpc (server.notes)"]
-        [ui/code-block (rc/inline "server/notes.clj")]]
-       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The browser stand-in (frontend.fake-datomic)"]
-        [ui/code-block (rc/inline "frontend/fake_datomic.cljs")]]]
+        [ui/code-block (rc/inline "server/notes.clj")]]]
       :examples
       [{:source    (rc/inline "frontend/examples/datomic_txes.cljs")
         :component datomic-txes/example}]}
@@ -667,10 +659,9 @@
         "Testing section)."]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
-        "server runs — against the browser stand-in, through "
-        [:code "frontend.notes"] ": the static-site twin of "
-        [:code "api.notes"] ", exactly as " [:code "frontend.chat"]
-        " twins a real chat api. Both panels are pure components — "
+        "server runs — through " [:code "frontend.notes"] ", "
+        [:code "api.notes"] "'s stand-in twin. Both panels are pure "
+        "components — "
         [:code "[live-panel db]"] " holds the facade's flow, and "
         [:code "[pinned-panel db]"] " is the previous page's "
         "function-call-against-a-value, no flow at all; only the "
@@ -835,13 +826,11 @@
         "ref is usually a re-observation of answers the client was "
         "already served; and data that must not be readable at "
         [:em "any"] " t is excision's job."]
-       [:p "No server on this static site, so no live demo. "
-        "Both value types are real in the "
-        "example app (api.server-info, api.viewer, mounted in "
-        "server.core) with JVM tests that drive the mount handler "
-        "with fake requests — run " [:code "task test-jvm"] ", or run "
-        "the app full-stack and call "
-        [:code "(whoami< (viewer-ref))"] " or "
+       [:p "Both value types are real in the example app "
+        "(api.server-info, api.viewer, mounted in server.core) with "
+        "JVM tests that drive the mount handler with fake requests — "
+        "run " [:code "task test-jvm"] ", or run the app full-stack "
+        "and call " [:code "(whoami< (viewer-ref))"] " or "
         [:code "(server-info< (server-info-ref))"] " from the browser."]]}]}
 
    {:title "Testing"
