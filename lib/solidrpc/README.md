@@ -45,6 +45,90 @@ SSE is server-to-client only. If you need low-latency client-to-server messaging
 
 ---
 
+## Live reads
+
+`solidrpc.live` is the standard shape for read endpoints. Backend authors write **pure functions of a database value** — `(f db) → shaped, authorized data` — and pass real db values around; on a Datomic peer they are cheap. `live` lifts such a function into a flow that starts from the db you hand it and re-emits whenever a transaction changes the answer. Views hold the flow; the wire carries only endpoint-shaped results.
+
+### The serialization boundary
+
+A db value cannot ship its data, so `solidrpc.transit` exchanges it at the wire:
+
+- server → wire: a db value serializes as a ref — `#solid/db {:basis-t 1010}` (an app-registered write handler; a basis-t is all a peer needs)
+- wire → client: the ref reads as an opaque `DbRef` record — components pass it around like any value
+- wire → server: an app-registered read handler resolves the ref back to an **actual db value** (`d/as-of`), so endpoint fns receive databases, never refs
+- `nil` crosses unchanged and means "now"
+
+That registration is the middleware: resolution happens at the transit boundary and application code never sees it:
+
+```clojure
+(transit/register-write-handler! datomic.db.Db transit/db-tag
+                                 (fn [db] {:basis-t (d/basis-t db)}))
+(transit/register-read-handler! transit/db-tag
+                                (fn [{:keys [basis-t]}]
+                                  (cond-> (d/db conn) basis-t (d/as-of basis-t))))
+```
+
+The server does not restrict which t a client may name. The trust boundary is the query fn — authorize against the *present*, read domain data at t — a ref is usually a re-observation of answers the client was already served, and data that must not be readable at *any* t is excision's job.
+
+### Anchors
+
+`live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the current db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. `nil` anchors to now.
+
+**A fixed point in time needs no flow at all.** An as-of view is an immutable value, so "the answer at t" is plain function application: `(all-notes (d/as-of db t))`. Render against a fixed value and nothing ever updates — which is what SSR and JVM test fixtures consume.
+
+### The env
+
+`live` is storage-agnostic — wire your store as two things:
+
+```clojure
+{:db      (fn [] current-db-value)   ;; nil-anchor + catch-up reads
+ :reports flow-of-tx-reports}        ;; maps with :db-after (+ whatever :relevant? inspects)
+```
+
+Share ONE running report flow per connection (`m/stream`) — Datomic's report queue semantics require it, and it gives the whole chain hold-style lazy/refcounted lifecycle.
+
+### Efficiency
+
+1. **`dedupe` is built in** — a transaction that doesn't change `f`'s answer emits nothing. Correctness backstop; saves bandwidth.
+2. **`:relevant?`** — a predicate on the tx-report, checked *before* re-running `f` (e.g. "did this tx touch a `:note/*` attribute"). Opt-in deliberately: a missed dependency in a relevance predicate is a correctness bug, so the default re-runs on every report and lets dedupe suppress.
+3. **Cross-client sharing** of identical (endpoint, args) flows: wrap the result in `m/stream` when fan-out costs show up. Not `live`'s job.
+
+### The facade convention
+
+The api namespace colocates the pure fn with its `<`-suffixed facade, registered under its own symbol — the client queries the same var whose `:clj` branch produces the flow, so the two sides cannot drift apart. Facades return flows; views hold them at point of use:
+
+```clojure
+(ns api.notes
+  (:require #?@(:clj  [[datomic.api :as d]
+                       [server.notes :as store]
+                       [solidrpc.live :as live]]
+                :cljs [[solidrpc.call.solidjs :as call]])))
+
+#?(:clj
+   (defn all-notes [db] ...))          ;; pure — call it with any as-of view
+
+(defn all-notes< [db]                  ;; < says flow; db is the anchor
+  #?(:clj  (live/live store/env db all-notes :relevant? note-tx?)
+     :cljs (call/query `all-notes< db)))
+```
+
+```clojure
+;; in a view — hold at point of use
+(let [notes< (sm/hold (notes/all-notes< db) :initial [])] ...)
+```
+
+Calling a read runs nothing — flows are recipes. No connection opens until a component renders the hold; unmounting closes it. Flow-returning endpoints are adapted to SSE automatically by `solidrpc.server/handle-query`.
+
+### Properties
+
+Components become pure functions of a db anchor, and the same component:
+
+- runs **live in the browser** over SSE;
+- renders **on the JVM without HTTP or mocks** — real facade, real flow, real database (see the example's `frontend.notes-view-test`: drive the UI through snapshot handlers, watch the answer come back through the tx-report stream);
+- and fixed points in time are just function calls — "the answer at t" as a value you keep, for fixtures and SSR.
+
+---
+
 ## License
 
 Copyright © 2026 Andre Helberg

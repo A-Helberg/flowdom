@@ -7,6 +7,7 @@
      [\"/api/command\" {:post solidrpc.server/handle-command}]"
   (:require
    [manifold.stream :as s]
+   [missionary.core :as m]
    [taoensso.timbre :as log]
    [solidrpc.sse :as sse]
    [solidrpc.registry :as registry]
@@ -19,6 +20,25 @@
       @(s/put! out x)
       (s/close! out)
       out)))
+
+(defn flow->stream
+  "Runs a missionary flow into a manifold stream — the adapter between
+  solidrpc.live flows (or any flow) and the SSE transport. The
+  blocking put is the backpressure; closing the stream (client
+  disconnected) cancels the flow, releasing its subscriptions (e.g. a
+  shared tx-report listener)."
+  [flow]
+  (let [out    (s/stream 16)
+        cancel ((m/reduce (fn [_ v] @(s/put! out v) nil) nil flow)
+                (fn [_] (s/close! out))
+                (fn [e]
+                  ;; a cancelled run fails by design — only log failures
+                  ;; that happened while anyone was still listening.
+                  (when-not (s/closed? out)
+                    (log/error e "flow->stream: flow failed"))
+                  (s/close! out)))]
+    (s/on-closed out cancel)
+    out))
 
 (defn handle-query
   "GET /api/query — looks up fn-name in the registry, calls it, streams result as SSE."
@@ -35,8 +55,16 @@
             (do (log/error "handle-query: fn not in registry" {:fn-name fn-name})
                 {:status 404 :headers {"content-type" "application/json"}
                  :body   (str "{\"error\":\"not found: " fn-name "\"}")})
-            (let [result (apply v args)]
-              {:status 200 :headers sse/headers :body (sse/manifold->sse (ensure-stream result))})))
+            (let [result (apply v args)
+                  ;; flow-returning endpoints (solidrpc.live facades)
+                  ;; are adapted here — endpoint authors never touch
+                  ;; the transport. Flows are fns; anything else
+                  ;; non-stream is wrapped as a one-shot.
+                  stream (cond
+                           (s/stream? result) result
+                           (fn? result)       (flow->stream result)
+                           :else              (ensure-stream result))]
+              {:status 200 :headers sse/headers :body (sse/manifold->sse stream)})))
         (catch Throwable t
           (log/error t "handle-query: exception" {:qs qs})
           {:status  500
