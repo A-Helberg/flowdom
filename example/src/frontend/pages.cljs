@@ -521,15 +521,19 @@
       [:<>
        [:p "solidrpc streams query results from the server over SSE: "
         [:code "(rpc/query 'chat/messages)"] " returns a missionary "
-        [:strong "flow"] ". Server-side, the query re-runs when a "
-        "transaction touches the attributes it watches and pushes a "
-        "full value first, diffs after — but none of that is visible "
-        "from here: a flow is a flow, so " [:code "sm/hold"] " bridges "
-        "it into hiccup and everything from the Missionary section "
-        "applies unchanged. The connection opens when a page first "
-        "derefs the hold and closes when the last subscriber leaves. "
-        "Writes go the other way as plain POSTs — "
-        [:code "rpc/command"] " returns a promise."]
+        [:strong "flow"] ". On this page the server's state is just "
+        "an atom, and a query is what you'd write yourself: "
+        [:code "m/watch"] " the atom, map a function over it, "
+        [:code "dedupe"] " — it re-runs when the state changes and "
+        "pushes only changed answers, a full value first, diffs "
+        "after. None of that is visible from here: a flow is a flow, "
+        "so " [:code "sm/hold"] " bridges it into hiccup and "
+        "everything from the Missionary section applies unchanged. "
+        "The connection opens when a page first derefs the hold and "
+        "closes when the last subscriber leaves. Writes go the other "
+        "way as plain POSTs — " [:code "rpc/command"] " returns a "
+        "promise, and on the server a command is a "
+        [:code "swap!"] "."]
        [:p "Components never write " [:code "rpc/query"] " at call "
         "sites, though. The intended shape is a " [:code ".cljc"]
         " api namespace per domain: the " [:code ":clj"] " branch is "
@@ -540,8 +544,9 @@
        [:p [:strong "One honest caveat:"] " this site is static — "
         "there is no server. " [:code "frontend.chat"] "'s cljs "
         "branch talks to a stand-in with the real query/command "
-        "signatures: an atom plays the database, a sleep plays the "
-        "network."]
+        "signatures: the same atom-backed model, with a sleep "
+        "playing the network. What the fake skips is only the "
+        "transport — the SSE wire and its diffs."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The api namespace (frontend.chat)"]
@@ -562,10 +567,10 @@
       :title "A Datomic tx-listener"
       :prose
       [:<>
-       [:p "The previous page waved at the server side — \"the query "
-        "re-runs when a transaction touches the attributes it "
-        "watches\" — this page shows that machinery. Datomic peers "
-        "learn about transactions by pulling from "
+       [:p "The previous page's server state was an atom, and "
+        [:code "m/watch"] " made change notification free. Swap the "
+        "atom for a real database and that's the piece you have to "
+        "replace: a feed of changes. Datomic's is "
         [:code "d/tx-report-queue"] ", a blocking queue of tx-reports, "
         "and pulling is exactly missionary's model: the whole listener "
         "is one " [:code "m/ap"] " — attach the queue, " [:code ".take"]
