@@ -776,6 +776,30 @@
 ;;             becomes the argument server-info< receives
 ;;   endpoint  (server-info< {:started-at … :uptime-ms …})
 ;;   wire in   plain data — the hold updates, the thunk re-runs"]
+       [:p "That covers values coming in. Values also " [:em "leave"]
+        ": " [:code ":write-handlers"] " is the outgoing contract, "
+        "mapping a " [:em "type"] " — dispatch is by the value's "
+        "type, since the server holds real values — to "
+        [:code "{:tag … :rep (fn [value] on-the-wire-value)}"] ". "
+        "The worked case is the db: let a command return the "
+        "post-transaction database, and the client receives a ref it "
+        "can anchor its next read with — the read-your-writes the "
+        "previous page promised, with no cache to patch."]
+       [ui/code-block
+        ";; the write direction: a command returns the post-tx db
+(defn add-note! [text]
+  (:db-after @(d/transact conn [{:note/text text}])))
+
+(defn command-handler [req]
+  (rpc/handle-command req
+    {:write-handlers
+     {datomic.db.Db {:tag \"solid/db\"
+                     :rep (fn [db] {:basis-t (d/basis-t db)})}}}))
+
+;; the client gets #solid/db {:basis-t t} — a ref like any other —
+;; and anchors its next read with it
+(-> (add-note! \"buy milk\")
+    (.then (fn [db] (reset! current-db db))))"]
        [:p "Two conventions complete the picture. A handler that "
         "rejects — no session, expired token — throws "
         [:code "(ex-info \"no session\" {:solidrpc/status 401})"]

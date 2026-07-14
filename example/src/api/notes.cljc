@@ -54,7 +54,9 @@
      :cljs (call/query `all-notes< db)))
 
 (defn add-note!
-  "Command. Returns true (:clj) / a Promise (:cljs)."
+  "Command. Returns the post-transaction db — a value in-process, a
+  ref on the client (via a Promise) — so the caller can anchor its
+  next read with it for read-your-writes."
   [text]
   #?(:clj  (store/add-note! text)
      :cljs (call/command `add-note! text)))

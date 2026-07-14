@@ -67,7 +67,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn add-note!
+  "Returns the post-transaction db value — over the wire it leaves as
+  a ref (the write handler above), so the client can anchor its next
+  read with it: read-your-writes, no cache to patch."
   [text]
   (when (seq text)
-    @(d/transact conn [{:note/text text}]))
-  true)
+    (:db-after @(d/transact conn [{:note/text text}]))))

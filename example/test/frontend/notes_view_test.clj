@@ -11,6 +11,7 @@
             [datomic.api :as d]
             [api.notes :as notes]
             [frontend.notes-view :as nv]
+            [server.core :as core]
             [server.notes :as store]
             [solidclj.api :as s]
             [solidclj.hiccup :as hic]
@@ -106,6 +107,25 @@
       (is (= (d/basis-t db0) (d/basis-t restored)))
       (is (= (notes/all-notes db0) (notes/all-notes restored))
           "the resolved value answers queries identically"))))
+
+(deftest command-returns-the-post-tx-db
+  (testing "in-process: a real db value — anchor a read with it"
+    (let [note (str "ryw-" (gensym))
+          db1  (notes/add-note! note)]
+      (is (some #{note} (notes/all-notes db1))
+          "read-your-writes: the returned value already contains the write")))
+  (testing "over the wire: the value leaves as a ref (the write handler)"
+    (let [note (str "ryw-wire-" (gensym))
+          resp (core/command-handler
+                {:body (java.io.StringReader.
+                        (transit/write {:fn-name 'api.notes/add-note!
+                                        :args    [note]}))})
+          body (transit/read (:body resp))]   ;; no read handlers: a generic ref
+      (is (= 200 (:status resp)))
+      (is (transit/ref? (:result body)))
+      (is (= transit/db-tag (transit/ref-tag (:result body))))
+      (is (pos? (:basis-t (transit/ref-rep (:result body))))
+          "a basis-t is all that crossed"))))
 
 (deftest dispose-freezes-the-tree-and-releases-the-flow
   (let [note   (str "after-dispose-" (gensym))
