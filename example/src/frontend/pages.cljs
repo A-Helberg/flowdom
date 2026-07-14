@@ -543,15 +543,18 @@
         " and the rpc plumbing lives in one file:"]
        [ui/code-block
         "(ns api.chat
-  (:require #?(:clj  [server.chat :as impl]
-               :cljs [solidrpc.call.solidjs :as rpc])))
+  (:require [missionary.core :as m]
+            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+
+;; the server's state — an atom is all this page needs
+#?(:clj (defonce state (atom {:messages []})))
 
 (defn messages []
-  #?(:clj  (impl/messages-flow)
+  #?(:clj  (m/eduction (map :messages) (dedupe) (m/watch state))
      :cljs (rpc/query `messages)))
 
 (defn send! [text]
-  #?(:clj  (impl/send! text)
+  #?(:clj  (do (swap! state update :messages conj text) true)
      :cljs (rpc/command `send! text)))
 
 ;; server startup:
