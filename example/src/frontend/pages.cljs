@@ -36,7 +36,11 @@
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.datomic-txes :as datomic-txes]
-            [frontend.examples.live-notes :as live-notes]))
+            [frontend.examples.live-notes :as live-notes]
+            ;; compiled into the app (not just inlined as source) so
+            ;; the ViewerRef write handler is registered when running
+            ;; full-stack — the request-values page says to try it
+            [api.viewer]))
 
 (def sections
   [{:title "Introduction"
@@ -655,13 +659,9 @@
        [:p "The db is the simple case: its resolver needs only the "
         "conn, closed over at startup, so it lives in the transit "
         "registry. Value types that need the " [:em "request"] " to "
-        "reconstruct — a current user from a session, however "
-        "sessions work in your app — get their handlers where you "
-        "mount the rpc handlers, as "
-        [:code "(rpc/handle-query req {:read-handlers …})"] ": the "
-        "router fn has the request in scope, so the decoder is a "
-        "plain closure over it. The solidrpc README covers the "
-        "mechanism."]
+        "reconstruct — a current user from a session — get their "
+        "handlers where you mount the rpc handlers. The next page "
+        "shows that wired."]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
         "server runs — against the previous page's browser stand-in, "
@@ -686,7 +686,57 @@
         [ui/code-block (rc/inline "api/notes.cljc")]]]
       :examples
       [{:source    (rc/inline "frontend/examples/live_notes.cljs")
-        :component live-notes/example}]}]}
+        :component live-notes/example}]}
+
+     {:id    :request-values
+      :title "Request-scoped values"
+      :prose
+      [:<>
+       [:p "The previous page's db values reconstruct from startup "
+        "context alone — the resolver closes over the conn, so it "
+        "lives in the transit registry. Some values only exist "
+        "relative to a " [:em "request"] ": the canonical one is the "
+        "current user, sitting in a session however your app does "
+        "sessions. Those handlers are supplied where you mount the "
+        "rpc handlers — your router fn has the request in scope, so "
+        "the decoder is a plain closure over it, and solidrpc never "
+        "learns whether reconstruction means a session-store lookup, "
+        "a JWT verification, or a db read."]
+       [:p "This example wires the mechanism end to end with the "
+        "only identity a bare request has: the client passes an "
+        [:code "api.viewer/ViewerRef"] " marker, and the read handler "
+        "in " [:code "server.core"] " turns it into "
+        "{:remote-addr … :user-agent …} — a value only the request "
+        "could supply. It is deliberately not an authentication "
+        "system; your session lookup goes in the same closure, and "
+        "nothing about the shape changes."]
+       [:p "Two conventions complete the picture. A handler that "
+        "rejects — no session, expired token — throws "
+        [:code "(ex-info \"no session\" {:solidrpc/status 401})"]
+        " and the response carries that status, so clients can tell "
+        "an invalid session from a server error. And because decode "
+        "runs once per request while an SSE connection can live for "
+        "minutes, reconstruct " [:em "identity"] " at the edge and "
+        "derive " [:em "authorization"] " from the db inside the "
+        "query fn — then open streams tighten on the transaction "
+        "that revokes, not at reconnect."]
+       [:p [:strong "The honest caveat:"] " no server on this static "
+        "site, so no live demo. The JVM test below drives the real "
+        "mount handler with a fake request — run it with "
+        [:code "task test-jvm"] ", or run the app full-stack and "
+        "call " [:code "(whoami< (->ViewerRef))"] " from the browser."]
+       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The value type (api.viewer)"]
+        [ui/code-block (rc/inline "api/viewer.cljc")]]
+       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The mount point (server.core)"]
+        [ui/code-block (rc/inline "server/core.clj")]]
+       [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden not-prose"}
+        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
+         "The test (api.viewer-test)"]
+        [ui/code-block (rc/inline "api/viewer_test.clj")]]]}]}
 
    {:title "Testing"
     :pages

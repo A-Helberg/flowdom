@@ -8,6 +8,7 @@
   the node-test build."
   (:require [cljs.test :refer-macros [deftest is]]
             [api.notes :as notes]
+            [api.viewer :as viewer]
             [frontend.notes-view :as nv]
             [solidclj.satom :as satom]
             [solidclj.missionary :as sm]))
@@ -28,3 +29,8 @@
   (let [hiccup (nv/notes-view nil)]
     (is (vector? hiccup))
     (is (= :div (first hiccup)))))
+
+(deftest viewer-facade-is-a-lazy-flow-over-a-marker-ref
+  ;; the ViewerRef is client-constructable plain data; the flow is a
+  ;; recipe — no connection until something subscribes
+  (is (fn? (viewer/whoami< (viewer/->ViewerRef)))))
