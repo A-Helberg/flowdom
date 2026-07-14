@@ -422,13 +422,18 @@
       :title "Flows & hold"
       :prose
       [:<>
-       [:p "Missionary is a functional effect system: a "
+       [:p "Every piece of state so far has been a value in an "
+        "atom. A UI also deals in things that are not: timers, "
+        "async requests, streams of server results. Missionary is "
+        "the effect system this stack uses for all of them: a "
         [:strong "flow"] " is a value describing a stream — building "
         "one runs nothing. " [:code "sm/hold"] " bridges it into the "
         "UI as a read-only reactive ref that derefs exactly like an "
         [:code "s/atom"] ", so everything from the previous pages (bare "
         "derefs under " [:code "h"] ", thunks, un-deref'd refs in "
-        "child slots) applies unchanged."]
+        "child slots) applies unchanged. solidrpc's queries return "
+        "flows, so this bridge is also how server data reaches the "
+        "page."]
        [:p [:code "hold"] " is lazy and refcounted, like a Reagent "
         "reaction: the flow starts on the first reactive deref and is "
         "cancelled when the last subscriber unmounts. Try it — visit "
@@ -439,7 +444,7 @@
         [:code "solidclj.missionary"] " never reuses a "
         [:code "missionary.core"] " name — " [:code "m/watch"]
         " still means atom → flow, so flow → ref needed a different "
-        "word, and " [:em "hold"] " is FRP's."]]
+        "word; " [:em "hold"] " is the FRP term."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_hold.cljs")
         :component missionary-hold/example}]}
@@ -467,7 +472,7 @@
         :component missionary-resource/example}]}
 
      {:id    :missionary-spawn
-      :title "Effects — spawn!"
+      :title "Effects & spawn!"
       :prose
       [:<>
        [:p "Not every task produces a value for the DOM. "
@@ -493,7 +498,8 @@
        [:p "The bridge runs both ways. For a single atom, missionary "
         "already has the operator: s/atoms are watchable, so "
         [:code "(m/watch my-atom)"] " gives a live flow of its values "
-        "with no adapter. For a whole " [:em "computation"] ", "
+        "with no adapter — the current value immediately at spawn, "
+        "then every change. For a whole " [:em "computation"] ", "
         [:code "sm/tracked"] " runs a thunk in a Solid tracking scope "
         "and emits every re-run — any s/atom deref'd inside re-fires "
         "it, deduplicated with " [:code "="] "."]

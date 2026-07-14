@@ -14,8 +14,8 @@
   (sm/hold (m/latest #(+ 32 (* % 1.8))
                      (sm/tracked (fn [] @celsius)))))
 
-;; flows remember what refs can't: a running history of every
-;; temperature seen while this page is mounted.
+;; a ref only holds the latest value; m/reductions keeps a running
+;; history of every temperature seen while this page is mounted.
 (defonce history
   (sm/hold (m/reductions conj [] (sm/tracked (fn [] @celsius)))
            :initial []))

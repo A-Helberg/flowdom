@@ -11,7 +11,7 @@
 
 ;; hold is lazy too: the flow starts when this page first derefs it and
 ;; is cancelled when the last subscriber unmounts. Navigate away and
-;; back — it restarts from 0, defonce notwithstanding.
+;; back — it restarts from 0 even though the hold is a defonce.
 (defonce seconds (sm/hold ticks :initial 0))
 
 (defn example []
