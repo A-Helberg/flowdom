@@ -1087,6 +1087,7 @@
         "components render and " [:em "react"] " in plain Clojure: "
         [:code "swap!"] " a satom and the tree updates fine-grained, "
         "exactly like the browser."]
+       [:h2 "Snapshots"]
        [:p "The API is three functions. " [:code "render"]
         " builds a live tree, " [:code "snapshot"] " serializes it "
         "back to plain hiccup at a point in time — control flow "
@@ -1104,19 +1105,46 @@
                 (snapshot t)))
     ((get-in (snapshot t) [2 1 :onClick]) :click)   ;; handlers are data
     (is (= [:span 6] (nth (snapshot t) 1)))))"]
-       [:p "Because the missionary bridge and solidrpc.live are cljc "
-        "too, the whole stack runs in-process: the test below "
-        "renders the real notes component against the real facade, "
-        "the real live combinator and an in-memory Datomic — no "
-        "HTTP, no mocks. It types into the input by calling the "
-        "snapshot's " [:code ":onInput"] ", clicks Add, and asserts "
-        "the note comes back through the tx-report stream. Run it "
-        "with " [:code "task test-jvm"] "."]
-       [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
-        [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "The full-stack test (frontend.notes-view-test)"]
-        [ui/code-block (rc/inline "frontend/notes_view_test.clj")]]
-       [:p "And because dbs are values, 'the answer at t' is a plain "
-        "function call — " [:code "(all-notes (d/as-of db t))"]
-        " — no flow, no render lifecycle, no awaiting. A reproducible "
-        "fixture is a value you keep."]]}]}])
+       [:h2 "Full-stack tests"]
+       [:p "Because the missionary bridge, " [:code "solidrpc.live"]
+        " and the api namespaces are all cljc, the whole stack from "
+        "component to database runs in one JVM process: the real "
+        [:code "notes-view"] " (the notes UI — an input, an Add "
+        "button and the live list, holding " [:code "all-notes<"]
+        " like the demo panels), the real facade, the real live "
+        "combinator, an in-memory Datomic. "
+        "No HTTP server starts and nothing is mocked, so a failure "
+        "means the logic is wrong — there is no mock to drift out "
+        "of sync with the implementation. Driving the UI is the "
+        "same snapshot mechanics as above; the one new piece is "
+        "waiting, because the update comes back through the real "
+        "tx-report stream:"]
+       [ui/code-block
+        ";; snapshots are plain hiccup, so helpers are ordinary seq code
+(defn els [snap tag]
+  (->> (tree-seq vector? seq snap)
+       (filter #(and (vector? %) (= tag (first %))))))
+
+(defn prop [snap tag k] (-> (els snap tag) first second k))
+(defn note-texts [snap] (map last (els snap :li)))
+
+(defn await-until [pred ms]
+  (let [deadline (+ (System/currentTimeMillis) ms)]
+    (loop []
+      (cond (pred)                                  true
+            (> (System/currentTimeMillis) deadline) false
+            :else (do (Thread/sleep 10) (recur))))))
+
+(deftest live-ui-roundtrip
+  (with-render [t [notes-view nil]]                ;; nil = no anchor
+    ((prop (snapshot t) :input :onInput) \"buy milk\")  ;; type
+    ((prop (snapshot t) :button :onClick) :click)       ;; click Add
+    (is (await-until #(some #{\"buy milk\"} (note-texts (snapshot t))) 3000)
+        \"the note came back through the tx-report stream\")))"]
+       [:p "The anchor works here the way it does everywhere else: "
+        "render " [:code "[notes-view db]"] " against a db value "
+        "and the test starts from a known state. And because dbs "
+        "are values, 'the answer at t' is a plain function call — "
+        [:code "(all-notes (d/as-of db t))"] " — no flow, no render "
+        "lifecycle, no awaiting. A reproducible fixture is a value "
+        "you keep."]]}]}])
