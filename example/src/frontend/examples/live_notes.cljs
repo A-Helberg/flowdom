@@ -1,6 +1,6 @@
 (ns frontend.examples.live-notes
   (:require-macros [solidclj.hiccup-macros :refer [h]])
-  (:require [frontend.fake-datomic :as fd]
+  (:require [datomic.api :as d]
             [frontend.notes :as notes]
             [solidclj.api :as s]
             [solidclj.missionary :as sm]
@@ -29,18 +29,20 @@
       (for [note (notes/all-notes db)]
         ^{:key note} [:li {:class "font-mono text-sm"} note])]))
 
-;; The demo shell below is the impure edge: buttons transact, and
-;; fd/basis-t + fd/as-of stand in for a db value you would otherwise
-;; be handed (e.g. by a command response). fd/ping! plays an unrelated
-;; writer — filtered by :relevant? before the query even re-runs.
+;; The demo shell below is the impure edge: buttons transact, and the
+;; pin button captures the current basis-t.
+
+(defonce ^:private n* (atom 0))
 
 (defn example []
   (let [pinned-t (s/atom nil)]
     (h [:div {:class "space-y-3"}
         [:div {:class "flex gap-2 flex-wrap"}
-         [ui/button {:on-click notes/add-note!} "transact a note"]
-         [ui/button {:on-click fd/ping!} "irrelevant tx"]
-         [ui/button {:on-click #(reset! pinned-t (fd/basis-t))}
+         [ui/button {:on-click #(notes/add-note! (str "note " (swap! n* inc)))}
+          "transact a note"]
+         [ui/button {:on-click #(d/transact notes/conn [{:db/id 1 :app/pings (swap! n* inc)}])}
+          "irrelevant tx"]
+         [ui/button {:on-click #(reset! pinned-t (d/basis-t (d/db notes/conn)))}
           "pin an as-of view"]]
         [:div {:class "grid md:grid-cols-2 gap-4"}
          [:div
@@ -52,4 +54,4 @@
                     (str "pinned — [pinned-panel (as-of " t ")]")
                     "pinned — click the button"))]
           [:show {:when pinned-t}
-           (fn [] [pinned-panel (fd/as-of @pinned-t)])]]]])))
+           (fn [] [pinned-panel (d/as-of (d/db notes/conn) @pinned-t)])]]]])))

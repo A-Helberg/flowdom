@@ -1,14 +1,20 @@
 (ns frontend.notes
   "The notes api namespace — static-site twin of the real
-  api/notes.cljc (inlined on the live-queries page), same shape as
-  frontend.chat is to a real chat api: the pure query and its
-  <-suffixed facade colocated, except the 'server side' here is
-  frontend.fake-datomic instead of a Datomic conn.
-
-  In the full-stack app this file does not exist — components require
-  api.notes and the :cljs branch queries the real server."
-  (:require [frontend.fake-datomic :as fd]
+  api/notes.cljc (inlined on the live-queries page): the pure query
+  and its <-suffixed facade colocated, wired the way server.notes
+  wires the real one. In the full-stack app this file does not exist —
+  components require api.notes."
+  (:require [datomic.api :as d]
+            [server.tx-listener :as txl]
+            [missionary.core :as m]
             [solidrpc.live :as live]))
+
+(defonce conn (d/connect "datomic:mem://notes"))
+(defonce tx-reports (m/stream (txl/tx-report-flow conn)))
+
+(def env
+  {:db      (fn [] (d/db conn))
+   :reports tx-reports})
 
 (defn all-notes
   "Pure: every note in `db` — call it with any as-of view."
@@ -21,13 +27,12 @@
   (boolean (some (fn [[_ a _]] (= :note/text a)) tx-data)))
 
 (defn all-notes<
-  "Flow of every note, anchored at `db` (a value here — the fake's dbs
-  are plain maps — or nil, which this facade treats as 'now'). Hold
-  it at point of use."
+  "Flow of every note, anchored at `db` (or nil, which this facade
+  treats as 'now'). Hold it at point of use."
   [db]
-  (live/live fd/env (or db (fd/db)) all-notes :relevant? note-tx?))
+  (live/live env (or db (d/db conn)) all-notes :relevant? note-tx?))
 
 (defn add-note!
   "Command."
-  []
-  (fd/add-note!))
+  [text]
+  (:db-after @(d/transact conn [{:note/text text}])))

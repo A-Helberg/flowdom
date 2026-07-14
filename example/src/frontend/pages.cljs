@@ -542,11 +542,13 @@
         "sides just call " [:code "(chat/messages)"] " — the rpc "
         "plumbing lives in one file."]
        [:p "This site is static — there is no server, on this page "
-        "or any that follows. Demos in this section run against "
-        "browser stand-ins with the real signatures (here, the same "
-        "atom-backed model with a sleep playing the network); the "
-        "server code shown is the real thing. That's the disclaimer, "
-        "once — the pages ahead won't repeat it."]
+        "or any that follows. Demo code in this section is written "
+        "exactly as it would be in a real application; what makes it "
+        "runnable here is stand-ins behind the same names — on later "
+        "pages even " [:code "datomic.api"] " resolves to one with "
+        "the real API. The server code shown in collapsed blocks is "
+        "the real thing. That's the disclaimer, once — the pages "
+        "ahead won't repeat it."]
        [:details {:class "mt-4 border border-gray-200 rounded-lg overflow-hidden not-prose"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
          "The api namespace (frontend.chat)"]
@@ -621,7 +623,7 @@
        [:p "Notice what stayed pure. " [:code "all-notes"] " never "
         "learns about reports or flows. And because database values "
         "are immutable, 'the answer at t' needs no flow at all — "
-        [:code "(all-notes (fd/as-of t))"] " is a plain function "
+        [:code "(all-notes (d/as-of db t))"] " is a plain function "
         "call, frozen forever. This composition is the standard "
         "shape for every read endpoint — which is exactly why you "
         "shouldn't have to write it by hand every time."]]
