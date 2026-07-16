@@ -4,7 +4,7 @@
 
 ClojureScript bindings for [SolidJS](https://www.solidjs.com/) — Reagent-style hiccup syntax over SolidJS's fine-grained reactivity, with a Missionary interop layer and a thin SSE transport for backend-driven streams.
 
-See the **[interactive tutorial](example/)** (run the example app) for a full walkthrough with live examples.
+See the **[Interactive Docs](https://a-helberg.github.io/solidclj/)** (code in the example folder) for a full walkthrough with live examples.
 
 ---
 
