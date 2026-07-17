@@ -17,3 +17,16 @@ fi
 echo -e "${YELLOW}Installing tools from mise.toml${NC}"
 mise install
 
+# ---------------------------------------------------------------------------
+# JS dependencies
+# ---------------------------------------------------------------------------
+
+ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+
+for dir in example lib/solidclj; do
+  echo -e "${YELLOW}Installing JS dependencies in ${dir}${NC}"
+  (cd "$ROOT_DIR/$dir" && mise exec -- bun install)
+done
+
+echo -e "${GREEN}Bootstrap complete${NC}"
+
