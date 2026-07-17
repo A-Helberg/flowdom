@@ -1,6 +1,6 @@
 # solidclj
 
-> **Not production ready.** APIs are unstable, there is no versioned release, and several rough edges remain.
+> **Not production ready.** APIs are unstable and several rough edges remain.
 
 ClojureScript bindings for [SolidJS](https://www.solidjs.com/) — Reagent-style hiccup syntax over SolidJS's fine-grained reactivity, with a Missionary interop layer and a thin SSE transport for backend-driven streams.
 
@@ -21,11 +21,81 @@ In Reagent the component function re-runs on state changes. In SolidJS it runs *
    (fn [] [:p "now: " @temp "°C"])]) ; reactive thunk — updates on swap!
 ```
 
-An un-deref'd `s/atom` in a child or prop slot is auto-bridged (equivalent to the thunk above):
+---
+
+## Getting started
+
+Depend on the library as a git dep, pinned to a release tag. A minimal [shadow-cljs](https://shadow-cljs.github.io/docs/UsersGuide.html) project is four files. The app itself, `src/app/core.cljs`:
 
 ```clojure
-[:span temp]    ; live
-[:span @temp]   ; snapshot
+(ns app.core
+  (:require [solidclj.api :as s]))
+
+(defonce clicks (s/atom 0))
+
+(defn counter []
+  [:button {:onClick #(swap! clicks inc)}
+   (fn [] [:span "clicks: " @clicks])])
+
+(defn init []
+  (s/render [counter] (.getElementById js/document "app")))
+```
+
+And three files of scaffolding:
+
+<details>
+<summary><code>deps.edn</code></summary>
+
+```clojure
+{:paths ["src"]
+ :deps  {thheller/shadow-cljs {:mvn/version "2.28.17"}
+         io.github.a-helberg/solidclj
+         {:git/url   "https://github.com/A-Helberg/solidclj"
+          :git/tag   "v0.0.1"
+          :git/sha   "xxxxxxx"  ; git rev-parse --short v0.0.1
+          :deps/root "lib/solidclj"}}}
+```
+
+</details>
+
+<details>
+<summary><code>shadow-cljs.edn</code></summary>
+
+```clojure
+{:deps true          ; resolve dependencies via deps.edn
+ :dev-http {8080 "public"}
+ :builds
+ {:app {:target  :browser
+        :modules {:app {:init-fn app.core/init}}}}}
+```
+
+</details>
+
+<details>
+<summary><code>public/index.html</code></summary>
+
+```html
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>solidclj app</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="/js/app.js"></script>
+  </body>
+</html>
+```
+
+</details>
+
+SolidJS itself comes from npm. Install it and start the watcher:
+
+```sh
+bun add solid-js             # or: npm install solid-js
+bun add -d shadow-cljs
+bunx shadow-cljs watch app   # http://localhost:8080
 ```
 
 ---
