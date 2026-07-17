@@ -7,7 +7,7 @@
 (defn example []
   [:div {:class "space-y-3"}
    [ui/button {:on-click #(swap! open? not)} "Toggle toast"]
-   [:show {:when open?}
+   [:show {:when (fn [] @open?)}
     ;; children render into document.body, escaping this panel entirely
     [:portal {:mount js/document.body}
      [:div {:class "fixed bottom-4 right-4 rounded-lg bg-gray-900 text-white px-4 py-2 shadow-lg"}

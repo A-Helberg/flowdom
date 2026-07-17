@@ -17,7 +17,7 @@
   [db]
   (let [notes< (sm/hold (notes/all-notes< db) :initial [])]
     (h [:ul {:class "space-y-1"}
-        [:for {:each notes<}
+        [:for {:each (fn [] @notes<)}
          (fn [note _] [:li {:class "font-mono text-sm"} note])]])))
 
 (defn pinned-panel
@@ -55,5 +55,5 @@
            (fn [] (if @pinned-db
                     "pinned — [pinned-panel db-of-my-write]"
                     "pinned — click the button"))]
-          [:show {:when pinned-db}
+          [:show {:when (fn [] @pinned-db)}
            (fn [] [pinned-panel @pinned-db])]]]])))

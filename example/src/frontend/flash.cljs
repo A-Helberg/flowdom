@@ -89,6 +89,6 @@
   [:div {:class "mt-8 pt-4 border-t border-gray-200"}
    [:label {:class "flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none"}
     [:input {:type     "checkbox"
-             :checked  enabled?
+             :checked  (fn [] @enabled?)
              :onChange #(swap! enabled? not)}]
     "Flash DOM updates"]])

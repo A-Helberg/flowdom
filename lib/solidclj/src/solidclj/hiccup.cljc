@@ -23,32 +23,34 @@
   treat it as a SolidJS reactive thunk and walk whatever hiccup it
   returns each time SolidJS calls it.
 
-  Reactive atoms render live
-  ==========================
+  Reactive atoms and derefs
+  =========================
   `solidclj.satom/atom` (exported as `solidclj.api/atom`) is a real
-  atom whose deref also subscribes the current Solid tracking scope,
-  so `(fn [] @my-satom)` is a live view. Passed *un-deref'd* into the
-  tree it is auto-bridged to a Solid signal: the walker mirrors its
-  value through `createSignal`, registers a watcher, and tears the
-  watcher down when the owner scope disposes.
+  atom whose deref also subscribes the current Solid tracking scope.
+  Reactivity comes from WHERE the deref runs — and only from a deref:
 
       (def time (s/atom nil))
 
-      [:div (fn [] @time)]  ;; live — deref subscribes the thunk
-      [:div time]           ;; live — un-deref'd atom is bridged
-      [:div @time]          ;; static — snapshot, deref ran in the
+      [:div (fn [] @time)]  ;; live — deref runs inside a thunk
+      [:div @time]          ;; static — snapshot; the deref ran in the
                             ;;          component body (untracked)
+      [:div time]           ;; mistake — refs are not interpreted;
+                            ;;           renders \"#<SAtom: …>\" and
+                            ;;           warns in dev builds
 
-  Plain `cljs.core/atom`s are NOT special: the renderer does nothing
-  with them (a dev build warns and drops them from child slots). Use
-  `s/atom` for state the UI should react to; keep plain atoms for
-  non-reactive mutable holders (DOM refs, test scaffolding, …).
-  Anything implementing `solidclj.satom/IReactiveAtom` (plus IDeref +
-  IWatchable) participates like an s/atom. See
+  The walker never interprets refs. A bare atom — s/atom or plain
+  `cljs.core/atom` alike — is just a value: in a child slot it renders
+  as its printed representation (with a dev-build warning) so the
+  mistake is visible, and anywhere else it passes through untouched.
+  The `h` macro (`solidclj.hiccup-macros`) writes the thunks for you,
+  so `(h [:div @time])` is live with no `(fn [])` in sight. See
   `docs/atoms-and-reactivity.md`.
 
-  Same goes for prop values: `[:input {:value some-satom}]` is
-  reactive, `[:input {:value @some-satom}]` is a one-shot snapshot.
+  Same rule for prop values: `[:input {:value (fn [] @text)}]` is
+  reactive (`{:value @text}` under `h` compiles to exactly that),
+  `[:input {:value @text}]` outside `h` is a one-shot snapshot, and
+  `[:input {:value text}]` passes the atom object itself — a bug you
+  can see.
 
   Refs
   ====
@@ -60,8 +62,7 @@
       [:input {:ref #(reset! my-input %)}]
 
   `:ref` accepts a function only. If you want an atom to track the
-  element, wrap it as shown above — the walker does NOT auto-bridge
-  atom-valued refs.
+  element, wrap it as shown above.
 
   JS Solid components
   ===================
@@ -74,20 +75,21 @@
 
   The component is invoked via SolidJS's `h`, props are converted to a
   JS object, and children pass through as varargs (Solid bundles them
-  into `props.children`). Atoms in props are still bridged.
+  into `props.children`).
 
   Keyed lists with [:for]
   =======================
   Solid's `<For>` is exposed as a hiccup form:
 
-      (def items (atom [{:id 1 :name \"a\"} {:id 2 :name \"b\"}]))
+      (def items (s/atom [{:id 1 :name \"a\"} {:id 2 :name \"b\"}]))
 
-      [:for {:each items}
+      [:for {:each (fn [] @items)}
        (fn [item index]
          [:li (:name item) \" — \" (index)])]
 
-  `:each` may be a static collection, a Solid signal getter, or an
-  atom (auto-bridged). The render fn receives `(item index)` per
+  `:each` may be a static collection or a Solid signal getter (any
+  zero-arg fn, e.g. `(fn [] @items)`). The render fn receives
+  `(item index)` per
   Solid's API; `index` is a Solid Accessor (a getter), so call it as
   `(index)` to read the current position. Whatever hiccup the render
   fn returns is walked.
@@ -109,16 +111,17 @@
     [:show {:when e :fallback fb} …]    <Show>
     [:switch {:fallback fb}             <Switch> + <Match>
       [:match {:when e} …] …]
-    [:dynamic {:component c …} …]   <Dynamic>; :component is value or atom
+    [:dynamic {:component c …} …]   <Dynamic>; :component is value or accessor fn
     [:portal {:mount el} …]         <Portal>
     [:suspense {:fallback fb} …]    <Suspense>
     [:error-boundary {:fallback     <ErrorBoundary>;
       (fn [err reset] hiccup)} …]    fallback receives (err reset)
     [my-component arg …]            CLJS component invocation
     (fn [] hiccup)                  Reactive thunk
-    some-satom                      Live read of an s/atom
     (fn [] \\@some-satom)           Live — deref subscribes the thunk
     \\@some-satom                   One-shot snapshot (outside thunks)
+    some-satom                      Not interpreted — renders its printed
+                                    form (dev builds warn)
     (for [x xs] [:li x])            Sequence flattened (no keying;
                                     add ^{:key id} on each item)
     {:ref (fn [el] …)}              DOM ref callback (fn only)"
@@ -131,31 +134,23 @@
 
 (declare as-element)
 
-(defn- atom-like?
-  "True for atoms the renderer treats as reactive: anything marked with
-  `solidclj.satom/IReactiveAtom` (s/atoms, and custom types that opt
-  in). Deliberately does NOT match plain `cljs.core/atom` — the
-  renderer does nothing special with those."
-  [x]
-  (satisfies? satom/IReactiveAtom x))
-
-(defn- plain-watchable?
-  "A watchable deref-able that is NOT a reactive atom — i.e. a plain
-  cljs.core/atom (or r/atom etc.) that the renderer ignores. Used only
-  to warn in dev builds."
+(defn- watchable?
+  "A watchable deref-able — s/atoms and plain atoms alike. The walker
+  never interprets refs; this predicate exists only to make placing
+  one bare in the tree loud (see `warn-bare-atom!`)."
   [x]
   (and #?(:cljs (satisfies? IDeref x)
           :clj  (instance? clojure.lang.IDeref x))
        #?(:cljs (satisfies? IWatchable x)
-          :clj  (instance? clojure.lang.IRef x))
-       (not (atom-like? x))))
+          :clj  (instance? clojure.lang.IRef x))))
 
-(defn- warn-plain-atom! [where]
+(defn- warn-bare-atom! [where]
   (when rt/debug?
     (rt/warn!
-     (str "[solidclj.hiccup] plain atom in " where " is not reactive and "
-          "is ignored. Use solidclj.api/atom (s/atom) for reactive state, "
-          "or deref it explicitly for a snapshot."))))
+     (str "[solidclj.hiccup] bare atom in " where " — the renderer does "
+          "not interpret refs. Deref it inside a thunk for a live view "
+          "((fn [] @a), or let the h macro write the thunk), or deref "
+          "it in the component body for a snapshot."))))
 
 (defn- parse-tag
   "Parses a hiccup keyword like :div, :div.foo, :div#main, :div.a.b#c
@@ -212,15 +207,12 @@
     (string? k)  (kebab->camel k)
     :else        (kebab->camel (str k))))
 
-(declare atom->signal-getter)
-
 (defn- normalize-style
   "Converts a :style value to something Solid's `style` prop accepts:
    - nil           → nil
    - string        → string (CSS text passes through)
    - map           → props object (via rt/->props) with camelCase keys;
-                     atom values become Solid accessors so per-property
-                     reactivity is live
+                     use accessor fns for per-property reactivity
    - else          → returned unchanged (Solid will handle accessors)"
   [v]
   (cond
@@ -229,12 +221,13 @@
     (map? v)       (rt/->props
                     (reduce-kv
                      (fn [m k val]
-                       (assoc m (style-key->css k)
-                              (if (atom-like? val)
-                                (atom->signal-getter val)
-                                val)))
+                       (when (watchable? val)
+                         (warn-bare-atom! (str "style value " k)))
+                       (assoc m (style-key->css k) val))
                      {} v))
-    :else          v))
+    :else          (do (when (watchable? v)
+                         (warn-bare-atom! ":style"))
+                       v)))
 
 (defn- class-coll->str
   "Joins a collection of class names into a single space-separated
@@ -268,7 +261,6 @@
    - vector / seq   → [(joined string) nil]
    - map            → [nil props object (via rt/->props) suitable for
                        Solid's :classList]
-   - atom-like      → [Solid accessor returning a class string, nil]
    - fn             → [fn nil] (assumed to be a Solid accessor)
    - other          → [(str v) nil]"
   [v]
@@ -279,23 +271,15 @@
     (map? v)         [nil (rt/->props
                            (reduce-kv
                             (fn [m k val]
+                              (when (watchable? val)
+                                (warn-bare-atom! (str ":class map value " k)))
                               (assoc m (if (keyword? k) (name k) (str k))
-                                     (if (atom-like? val)
-                                       (atom->signal-getter val)
-                                       val)))
+                                     val))
                             {} v))]
-    (atom-like? v)   (let [g (atom->signal-getter v)]
-                       [(fn []
-                          (let [x (g)]
-                            (cond
-                              (string? x)     x
-                              (keyword? x)    (name x)
-                              (sequential? x) (class-coll->str x)
-                              (nil? x)        ""
-                              :else           (str x))))
-                        nil])
     (fn? v)          [v nil]
     (sequential? v)  [(class-coll->str v) nil]
+    (watchable? v)   (do (warn-bare-atom! ":class")
+                         [(pr-str v) nil])
     :else            [(str v) nil]))
 
 (defn atom->signal-getter
@@ -308,10 +292,12 @@
   whose add-watch begins their work (solidclj.missionary holds) are
   already running when first read.
 
+  This is the EXPLICIT bridge behind `solidclj.api/?` — the hiccup
+  walker itself never interprets refs.
+
   If called outside a Solid owner (no render / createRoot / component
   body on the stack), we cannot register cleanup, so we fall back to
-  a one-shot snapshot getter and warn in dev. Use atom-like values
-  only inside the hiccup walker or under render to get live updates."
+  a one-shot snapshot getter and warn in dev."
   [a]
   (if (some? (rt/get-owner))
     (let [[get-v set-v] (rt/create-signal nil)
@@ -327,14 +313,6 @@
               "taking a one-shot snapshot. Wrap in render/createRoot/"
               "component body for live updates.")))
       (fn [] v))))
-
-(defn- atom->thunk
-  "Like `atom->signal-getter` but the returned fn walks the value
-  through `as-element`, so an atom holding hiccup (e.g.
-  `(reset! a [:span \"x\"])`) renders properly in a child slot."
-  [a]
-  (let [g (atom->signal-getter a)]
-    (fn [] (as-element (g)))))
 
 (defn- merge-classes
   "Combines shorthand classes (vector of strings from parse-tag) with
@@ -368,8 +346,9 @@
     - :style string / map (kebab→camel, reactive values)
     - :id explicit value overrides shorthand-id
     - shorthand classes prepended to :class
-    - any other reactive-atom-valued prop is bridged via atom->thunk
-      so e.g. [:input {:value some-satom}] is live."
+    - refs are NOT interpreted — a bare atom passes through as the
+      object itself (dev builds warn); use an accessor fn for a live
+      prop value, e.g. [:input {:value (fn [] @text)}]."
   [props shorthand-classes shorthand-id]
   (let [props              (or props {})
         [cls cls-list]     (merge-classes shorthand-classes (:class props))
@@ -378,11 +357,9 @@
         rest-props         (dissoc props :class :style :id)
         clj                (reduce-kv
                             (fn [m k v]
-                              (assoc m k
-                                     (cond
-                                       (atom-like? v)       (atom->thunk v)
-                                       (plain-watchable? v) (do (warn-plain-atom! (str k " prop")) v)
-                                       :else                v)))
+                              (when (watchable? v)
+                                (warn-bare-atom! (str k " prop")))
+                              (assoc m k v))
                             {} rest-props)
         clj                (cond-> clj
                              cls      (assoc :class cls)
@@ -393,8 +370,8 @@
 
 (defn- renderable?
   "Reagent semantics: nil / true / false are dropped from child
-  positions. Numbers (including 0), strings, vectors, fns, atoms all
-  render."
+  positions. Numbers (including 0), strings, vectors, fns all render
+  (bare atoms render too — as their printed representation)."
   [v]
   (not (or (nil? v) (true? v) (false? v))))
 
@@ -409,15 +386,18 @@
 (defn- ->getter
   "Wraps a value so it reads as a Solid accessor (a zero-arg fn).
    - nil           → (fn [] nil)
-   - atom-like     → bridged via atom->signal-getter
    - fn            → returned as-is (already an accessor)
-   - other value   → constant accessor returning that value"
+   - other value   → constant accessor returning that value
+  Refs are not interpreted: a bare atom becomes a constant accessor
+  returning the atom object (always truthy) and dev builds warn —
+  pass (fn [] @a) for a live read."
   [v]
   (cond
-    (nil? v)       (fn [] nil)
-    (atom-like? v) (atom->signal-getter v)
-    (fn? v)           v
-    :else             (fn [] v)))
+    (nil? v) (fn [] nil)
+    (fn? v)  v
+    :else    (do (when (watchable? v)
+                   (warn-bare-atom! "a :when slot"))
+                 (fn [] v))))
 
 (defn- ->renderable
   "Walks a hiccup-or-value into something Solid can render in a
@@ -425,11 +405,12 @@
   explicit name used for control-flow tags so the intent reads."
   [v]
   (cond
-    (nil? v)        nil
-    (vector? v)     (as-element v)
-    (atom-like? v)  (atom->thunk v)
-    (fn? v)         (fn [] (as-element (v)))
-    :else           v))
+    (nil? v)       nil
+    (vector? v)    (as-element v)
+    (watchable? v) (do (warn-bare-atom! "a fallback slot")
+                       (pr-str v))
+    (fn? v)        (fn [] (as-element (v)))
+    :else          v))
 
 (defn- as-vec
   "Walk a hiccup vector. The first element decides the shape:
@@ -472,9 +453,9 @@
                (walk-children children)))
 
       ;; ---- :for — Solid <For> --------------------------------------------
-      ;; `:each` may be a static collection, a Solid signal getter, or an
-      ;; atom (auto-bridged via the raw signal-getter so SolidJS sees the
-      ;; underlying collection, not a walked DOM tree).
+      ;; `:each` may be a static collection or a Solid signal getter
+      ;; (any zero-arg fn, e.g. (fn [] @items)). Refs are not
+      ;; interpreted: a bare atom warns in dev and renders nothing.
       ;;
       ;; SolidJS's `mapArray` iterates `:each` using `arr.length` and
       ;; `arr[i]`, which CLJS persistent vectors don't expose. Anything
@@ -488,12 +469,12 @@
       (let [{:keys [each]} (first more)
             render-fn      (second more)
             each-prop      (cond
-                             (atom-like? each)
-                             (let [g (atom->signal-getter each)]
-                               (fn [] (rt/->each (g))))
-
                              (fn? each)
                              (fn [] (rt/->each (each)))
+
+                             (watchable? each)
+                             (do (warn-bare-atom! ":each")
+                                 (rt/->each nil))
 
                              :else
                              (rt/->each each))]
@@ -583,8 +564,11 @@
       ;; ---- :dynamic — Solid <Dynamic> ------------------------------------
       ;; [:dynamic {:component c & extra-props} & children]
       ;;
-      ;; :component accepts a component reference (HTML tag string or
-      ;; Solid component fn) or an atom holding one. Other map keys flow
+      ;; :component accepts a value (an HTML tag string) or a
+      ;; fn-accessor returning the current component — (fn [] @tag),
+      ;; which is also what `h` compiles {:component @tag} into. A fn
+      ;; is ALWAYS read as an accessor, so a static component fn must
+      ;; be wrapped: {:component (fn [] my-comp)}. Other map keys flow
       ;; through normalize-props like a normal element.
       ;;
       ;; We can't put `component` on the plain props map because Solid's
@@ -599,8 +583,10 @@
             {:keys [component]} props
             children   (next more)
             comp-fn    (cond
-                         (atom-like? component) (atom->signal-getter component)
-                         :else                  (fn [] component))
+                         (fn? component) component
+                         :else           (do (when (watchable? component)
+                                               (warn-bare-atom! ":component"))
+                                             (fn [] component)))
             js-props   (-> (normalize-props (dissoc props :component) [] nil)
                            (rt/lazy-prop! :component comp-fn))]
         (apply rt/h rt/Dynamic js-props (walk-children children)))
@@ -609,9 +595,9 @@
       ;; [:portal {:mount el :use-shadow? false :is-svg? false} & children]
       ;;
       ;; :mount is the DOM node children render into (outside the host
-      ;; tree). It accepts a static DOM node, an atom holding one, or a
-      ;; fn-accessor. Like :dynamic's :component, we install it as a JS
-      ;; getter so Solid reads the live value inside its tracking memo.
+      ;; tree). It accepts a static DOM node or a fn-accessor returning
+      ;; one. Like :dynamic's :component, we install it as a JS getter
+      ;; so Solid reads the live value inside its tracking memo.
       (= tag :portal)
       (let [props (first more)
             _     (when rt/debug?
@@ -621,9 +607,10 @@
             {:keys [mount use-shadow? is-svg?]} props
             children   (next more)
             mount-fn   (cond
-                         (atom-like? mount) (atom->signal-getter mount)
-                         (fn? mount)        mount
-                         :else              (fn [] mount))
+                         (fn? mount) mount
+                         :else       (do (when (watchable? mount)
+                                           (warn-bare-atom! ":mount"))
+                                         (fn [] mount)))
             js-props   (-> (rt/->props
                             (cond-> {}
                               (some? use-shadow?) (assoc :useShadow use-shadow?)
@@ -702,12 +689,12 @@
             {:keys [each]} props
             render-fn      (second more)
             each-prop      (cond
-                             (atom-like? each)
-                             (let [g (atom->signal-getter each)]
-                               (fn [] (rt/->each (g))))
-
                              (fn? each)
                              (fn [] (rt/->each (each)))
+
+                             (watchable? each)
+                             (do (warn-bare-atom! ":each")
+                                 (rt/->each nil))
 
                              :else
                              (rt/->each each))]
@@ -785,7 +772,9 @@
    - vectors → `h` calls (or recursive component invocations);
    - sequences → walked element-wise and returned as a JS array, so
      `(for …)` flattens into the parent's children list;
-   - atom-likes → bridged to a Solid signal under the hood (live);
+   - atoms/refs → NOT interpreted: rendered as their printed
+     representation, and dev builds warn — reactivity requires a
+     deref inside a thunk;
    - functions → wrapped so SolidJS treats them as reactive thunks;
      whatever hiccup the fn returns is walked too;
    - everything else (strings, numbers, nil, …) → returned unchanged."
@@ -802,9 +791,7 @@
         (warn-keyless-once! (first vec-items)))
       (rt/->children (map as-element items)))
 
-    (atom-like? form) #?(:cljs (if isServer (as-element @form) (atom->thunk form))
-                         :clj  (atom->thunk form))
-    (plain-watchable? form) (do (warn-plain-atom! "a child slot") nil)
+    (watchable? form) (do (warn-bare-atom! "a child slot") (pr-str form))
     (fn? form)            #?(:cljs (if isServer (as-element (form)) (fn [] (as-element (form))))
                              :clj  (fn [] (as-element (form))))
     :else                 form))
@@ -873,7 +860,7 @@
      (defn snapshot
        "Serialize a live tree (or the {:tree …} handle `render`
   returns) to plain hiccup at this point in time: control flow
-  collapsed to what is rendered, thunks and satoms materialized,
+  collapsed to what is rendered, thunks materialized,
   handler fns preserved in props (call them from tests, then snapshot
   again). Portal content appears under a [:portal …] marker.
 

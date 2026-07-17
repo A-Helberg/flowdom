@@ -6,13 +6,13 @@ a real Clojure atom — `swap!`, `reset!`, `add-watch`, validators all behave
 exactly like `cljs.core/atom` — whose deref *also* subscribes the Solid
 tracking scope it runs in.
 
-Plain `cljs.core/atom`s are **not** special. The renderer ignores them (dev
-builds warn), and they never trigger updates. Use them for non-reactive
-mutable holders — DOM refs, test scaffolding — and `s/atom` for anything the
-UI should react to. Custom reference types can opt in by implementing
-`solidclj.satom/IReactiveAtom` (plus `IDeref` + `IWatchable`).
+The whole model is one rule: **reactivity is a deref inside a thunk.** The
+walker never interprets refs — an atom in the tree is just a value, and a
+deref outside a tracking scope is just a snapshot. Custom reference types
+participate in tracked derefs by implementing `solidclj.satom/IReactiveAtom`
+(plus `IDeref` + `IWatchable`).
 
-## Three patterns
+## Two patterns
 
 **1. Deref inside a `(fn [] …)` thunk** — the thunk re-runs when the atom changes:
 
@@ -33,15 +33,14 @@ prop values (except `:on*`/`:ref`, which are callbacks):
 (h [:input {:value @temp}])        ; live prop
 ```
 
-**3. Underef'd in a hiccup slot** — the walker bridges the s/atom to a Solid
-signal automatically:
+Everywhere a slot wants a reactive value — `:when`, `:each`, `:component`,
+`:mount`, prop values, style/class entries — pass an accessor: a zero-arg fn
+that derefs inside. `h` writes exactly those for you.
 
 ```clojure
-[:div my-satom]                        ; child — updates on change
-[:input {:value my-satom}]             ; prop
-[:for {:each my-satom} render-fn]      ; list
-[:dynamic {:component my-satom}]       ; component switching
-[:show {:when my-satom} …]             ; condition
+[:show {:when (fn [] @on?)} …]
+[:for {:each (fn [] @items)} render-fn]
+[:dynamic {:component (fn [] @tag)}]
 ```
 
 `s/?` still exists for missionary flows (`(s/? some-flow)` → getter fn) and
@@ -64,17 +63,18 @@ deref at the top level of a component captures the value at mount:
   (h [:div @temp]))      ; live — h moves the deref into a thunk for you
 ```
 
-**Plain atoms don't update anything.** `[:div my-plain-atom]` renders
-nothing and warns in dev; `(fn [] @my-plain-atom)` runs once and never
-re-runs. Reach for `s/atom`.
+**A bare atom in a slot renders its printed representation.** `[:div temp]`
+puts `#<SAtom: 21>` in the DOM and warns in dev builds — a visible bug, not
+a silent one. The same goes for plain `cljs.core/atom`s; the renderer treats
+all refs alike.
 
 ## Quick reference
 
 ```
 (fn [] @my-satom)     live — deref subscribes the thunk
 (h [:p @my-satom])    live — h auto-wraps derefs (children and props)
-my-satom              underef'd in a hiccup slot → walker bridges, live
 @my-satom             outside a thunk: snapshot, captured once
+my-satom              bare in a slot: printed representation, dev warning
 (s/? some-flow)       missionary flow → returns getter fn
-plain (atom …)        ignored by the renderer (dev warning)
+plain (atom …)        same as any ref — never reactive in the tree
 ```

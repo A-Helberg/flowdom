@@ -20,6 +20,6 @@
 
    ;; <For> keys by item identity; index is a getter, so call it
    [:ul {:class "list-disc pl-5 font-mono text-sm"}
-    [:for {:each todos}
+    [:for {:each (fn [] @todos)}
      (fn [item index]
        [:li "#" (fn [] (inc (index))) " — " (:text item)])]]])

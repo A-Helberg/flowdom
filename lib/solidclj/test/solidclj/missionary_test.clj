@@ -51,11 +51,11 @@
       (is (= [:p 2] (s/snapshot t))))
     (is (empty? (.getWatches a)) "m/watch detached on unmount")))
 
-(deftest hold-bridged-as-undereffed-child
+(deftest hold-deref-in-thunk-starts-and-is-live
   (let [a (s/atom 7)
         h (sm/hold (m/watch a))]
-    (hic/with-render [t [:p h]]
-      (is (= [:p 7] (s/snapshot t)) "walker auto-bridge starts the hold")
+    (hic/with-render [t [:p (fn [] @h)]]
+      (is (= [:p 7] (s/snapshot t)) "first tracked deref starts the hold")
       (swap! a inc)
       (is (= [:p 8] (s/snapshot t))))))
 

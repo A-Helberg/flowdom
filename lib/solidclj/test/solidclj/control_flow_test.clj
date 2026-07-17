@@ -14,7 +14,7 @@
   (let [on? (s/atom true)
         [tree dispose] (rt/create-root
                         #(hic/as-element
-                          [:div [:show {:when on? :fallback [:p "off"]}
+                          [:div [:show {:when (fn [] @on?) :fallback [:p "off"]}
                                  [:b "on"]]]))
         slot (first (:children @tree))]
     (is (= "b" (:tag @(first (sc slot)))))
@@ -30,7 +30,7 @@
     (let [n (s/atom 0)
           [tree dispose] (rt/create-root
                           #(hic/as-element
-                            [:div [:show {:when n :fallback [:i "none"]}
+                            [:div [:show {:when (fn [] @n) :fallback [:i "none"]}
                                    [:b "some"]]]))
           slot (first (:children @tree))]
       (is (= "i" (:tag @(sc slot))) "0 is falsy")
@@ -64,7 +64,7 @@
         items (s/atom [item-a item-b])
         [tree dispose] (rt/create-root
                         #(hic/as-element
-                          [:ul [:for {:each items}
+                          [:ul [:for {:each (fn [] @items)}
                                 (fn [item index]
                                   (swap! render-count inc)
                                   (let [local (s/atom (str "local-" (name (:id item))))]
@@ -97,7 +97,7 @@
         items (s/atom [i1 i2])
         [_ dispose] (rt/create-root
                      #(hic/as-element
-                       [:ul [:for {:each items}
+                       [:ul [:for {:each (fn [] @items)}
                              (fn [item _]
                                [:li (fn []
                                       (rt/on-cleanup
@@ -121,7 +121,7 @@
         items (s/atom [dup dup])
         [tree dispose] (rt/create-root
                         #(hic/as-element
-                          [:ul [:for {:each items}
+                          [:ul [:for {:each (fn [] @items)}
                                 (fn [_ index] [:li (fn [] (index))])]]))
         slot (first (:children @tree))]
     (is (= 2 (count (sc slot))) "duplicate identities each get a row")
@@ -134,7 +134,7 @@
         items (s/atom ["a" "b"])
         [tree dispose] (rt/create-root
                         #(hic/as-element
-                          [:ol [:index {:each items}
+                          [:ol [:index {:each (fn [] @items)}
                                 (fn [item-getter i]
                                   (swap! idx-renders inc)
                                   [:li (fn [] (str i "-" (item-getter)))])]]))
@@ -163,7 +163,7 @@
         c (s/atom "section")
         [tree dispose] (rt/create-root
                         #(hic/as-element
-                          [:div [:dynamic {:component c :class "dyn"} "child"]]))
+                          [:div [:dynamic {:component (fn [] @c) :class "dyn"} "child"]]))
         slot (first (:children @tree))]
     (is (= "section" (:tag @(sc slot))))
     (is (= "dyn" (get-in @(sc slot) [:props :class])))

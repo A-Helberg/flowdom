@@ -23,9 +23,10 @@
   - `swap!`/`reset!` notify watchers unconditionally (normal atom
     behaviour), but reactive propagation is deduplicated with CLJS `=`:
     resetting to an equal value does not re-run Solid computations.
-  - An s/atom also satisfies IDeref + IWatchable, so everything that
-    works with a plain atom in hiccup (un-deref'd children, prop
-    values, `:each`, …) works with an s/atom too.
+  - An s/atom also satisfies IDeref + IWatchable, so plain-atom
+    tooling (add-watch, missionary's m/watch, the React bridge) works
+    on it too. The hiccup walker never interprets refs — liveness
+    always comes from a deref inside a tracking scope.
   - Component bodies are NOT tracking scopes in solidclj (unlike
     Reagent, the component fn runs once). A bare `@a` at the top level
     of a component is a one-shot snapshot; deref inside a `(fn [] …)`
@@ -44,10 +45,12 @@
   (:require [solidclj.runtime :as rt]))
 
 (defprotocol IReactiveAtom
-  "Marker for atoms the hiccup renderer treats as reactive. Plain
-  cljs.core/atoms deliberately do NOT satisfy this — the renderer does
-  nothing special with them. Implement it (plus IDeref + IWatchable)
-  to make a custom reference type live in hiccup.")
+  "Marker for reactive refs whose deref subscribes the current
+  tracking scope (s/atoms, missionary hold/resource refs). Dispatch
+  target for the EXPLICIT bridges — `solidclj.api/?` and the React
+  interop — the hiccup walker itself never interprets refs. Implement
+  it (plus IDeref + IWatchable) to make a custom reference type
+  participate.")
 
 #?(:cljs
    (deftype SAtom [^:mutable state ^:mutable meta validator ^:mutable watches

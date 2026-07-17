@@ -29,20 +29,21 @@
     (reset! a "after-dispose")
     (is (= "bye" (sc slot)) "no updates after dispose")))
 
-(deftest satom-auto-bridge-child
+(deftest bare-atom-child-prints
   (let [a (s/atom 1)
-        [tree dispose] (rt/create-root #(hic/as-element [:span a]))
-        slot (first (:children @tree))]
-    (is (= 1 (sc slot)))
+        [tree dispose] (rt/create-root #(hic/as-element [:span a]))]
+    (is (= ["#<SAtom: 1>"] (:children @tree))
+        "refs are not interpreted — printed representation, walk-time")
     (swap! a inc)
-    (is (= 2 (sc slot)))
-    (dispose)
-    (is (empty? (.getWatches a)) "bridge watch removed on dispose")))
+    (is (= ["#<SAtom: 1>"] (:children @tree)) "not live")
+    (is (empty? (.getWatches a)) "no watch was ever registered")
+    (dispose)))
 
 (deftest reactive-prop
   (let [v (s/atom "x")
         [tree dispose] (rt/create-root
-                        #(hic/as-element [:input {:value v :onChange identity}]))]
+                        #(hic/as-element [:input {:value    (fn [] @v)
+                                                  :onChange identity}]))]
     (is (= "x" (get-in @tree [:props :value])))
     (reset! v "y")
     (is (= "y" (get-in @tree [:props :value])))
@@ -52,7 +53,8 @@
 (deftest reactive-style-entry
   (let [c (s/atom "red")
         [tree dispose] (rt/create-root
-                        #(hic/as-element [:p {:style {:color c :margin-top "1px"}}]))]
+                        #(hic/as-element [:p {:style {:color      (fn [] @c)
+                                                      :margin-top "1px"}}]))]
     (is (= "1px" (get-in @tree [:props :style "marginTop"])))
     (is (= "red" (get-in @tree [:props :style "color"])))
     (reset! c "blue")

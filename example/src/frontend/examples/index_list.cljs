@@ -10,7 +10,7 @@
    ;; its text updates. Note the flipped signature vs :for — here the
    ;; item is the getter and the index is a plain number.
    [:div {:class "font-mono text-sm"}
-    [:index {:each readings}
+    [:index {:each (fn [] @readings)}
      (fn [reading i]
        [:div "sensor " i ": " (fn [] (reading))])]]
 

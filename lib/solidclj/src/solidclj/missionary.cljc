@@ -53,8 +53,8 @@
   Hiccup story
   ============
   Flows are fns, so they are indistinguishable from render thunks in a
-  child slot — the renderer does NOT auto-bridge them (same philosophy
-  as plain atoms: nothing implicit). You always name the bridge:
+  child slot — and the renderer never interprets refs or flows;
+  nothing is implicit. You always name the bridge:
 
       (defonce price (sm/hold (rpc/query 'ticker/price \"AAPL\")
                               :initial \"—\"))

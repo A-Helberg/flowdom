@@ -11,6 +11,6 @@
       ^{:key t}
       [ui/button {:on-click #(reset! tag t)} t])]
 
-   ;; :component may be a tag string, a component fn, or an atom of one
-   [:dynamic {:component tag}
+   ;; :component takes a tag string / component fn, or an accessor of one
+   [:dynamic {:component (fn [] @tag)}
     "Same content, different element"]])

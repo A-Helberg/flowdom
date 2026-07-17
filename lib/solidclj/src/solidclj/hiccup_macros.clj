@@ -21,8 +21,9 @@
 ;;;   `:on*` keys, whose values are callbacks, not reactive reads. Other
 ;;;   list-forms in props are left alone (they're usually handlers).
 ;;; - Nested hiccup vectors are recursed into. Everything else (literals,
-;;;   symbols, atoms) passes through unchanged — the runtime bridge in
-;;;   `solidclj.hiccup` handles reactive atoms and other values.
+;;;   symbols) passes through unchanged. Note `h` sees SOURCE FORMS: a
+;;;   symbol holding an atom passes through as a symbol, and the runtime
+;;;   walker does not interpret refs — liveness always needs the deref.
 
 (declare transform-vec)
 

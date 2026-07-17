@@ -35,15 +35,16 @@
              [:act :bump]
              [:text "static:1|live:3"]]}
 
-   ;; Un-deref'd satom in a child slot is auto-bridged and live.
-   {:id :satom-auto-bridge
+   ;; Refs are not interpreted: a bare satom in a child slot renders
+   ;; its printed representation, captured at walk time — never live.
+   {:id :bare-atom-prints
     :make (fn []
             (let [a (s/atom "x")]
               {:hiccup  [:p "v=" a]
                :actions {:set-y #(reset! a "y")}}))
-    :script [[:text "v=x"]
+    :script [[:text "v=#<SAtom: \"x\">"]
              [:act :set-y]
-             [:text "v=y"]]}
+             [:text "v=#<SAtom: \"x\">"]]}
 
    ;; Component bodies run ONCE — reactive updates must not re-run them.
    {:id :component-runs-once
@@ -64,7 +65,7 @@
    {:id :show-truthiness
     :make (fn []
             (let [n (s/atom 0)]
-              {:hiccup  [:div [:show {:when n :fallback "none"}
+              {:hiccup  [:div [:show {:when (fn [] @n) :fallback "none"}
                                "count:" (fn [] @n)]]
                :actions {:three     #(reset! n 3)
                          :zero      #(reset! n 0)
@@ -99,7 +100,7 @@
                   ic      {:k "c"}
                   items   (s/atom [ia ib])
                   renders (atom 0)]
-              {:hiccup   [:ul [:for {:each items}
+              {:hiccup   [:ul [:for {:each (fn [] @items)}
                                (fn [item index]
                                  (swap! renders inc)
                                  [:li (fn [] (index)) (:k item)])]]
@@ -121,7 +122,7 @@
     :make (fn []
             (let [items   (s/atom ["a" "b"])
                   renders (atom 0)]
-              {:hiccup   [:ol [:index {:each items}
+              {:hiccup   [:ol [:index {:each (fn [] @items)}
                                (fn [item-getter i]
                                  (swap! renders inc)
                                  [:li i ":" (fn [] (item-getter))])]]
@@ -143,7 +144,7 @@
     :make (fn []
             (let [on?     (s/atom true)
                   cleaned (atom 0)]
-              {:hiccup   [:div [:show {:when on?}
+              {:hiccup   [:div [:show {:when (fn [] @on?)}
                                 (fn []
                                   (s/on-cleanup (fn [] (swap! cleaned inc)))
                                   "alive")]]

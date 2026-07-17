@@ -20,7 +20,7 @@
 
 (defn example []
   (h [:div {:class "space-y-3"}
-      [:show {:when mounted? :fallback [:p {:class "text-gray-400"} "unmounted"]}
+      [:show {:when (fn [] @mounted?) :fallback [:p {:class "text-gray-400"} "unmounted"]}
        [heart]]
       [:p {:class "font-mono"} "beats: " @beats]
       [ui/button {:on-click #(swap! mounted? not)} "toggle mount"]]))

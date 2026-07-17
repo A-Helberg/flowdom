@@ -29,8 +29,8 @@
   (let [on?   (s/atom false)
         items (s/atom [{:id 1} {:id 2}])]
     (hic/with-render [t [:div
-                         [:show {:when on? :fallback [:i "off"]} [:b "on"]]
-                         [:ul [:for {:each items}
+                         [:show {:when (fn [] @on?) :fallback [:i "off"]} [:b "on"]]
+                         [:ul [:for {:each (fn [] @items)}
                                (fn [item _] [:li (:id item)])]]]]
       (is (= [:div [:i "off"] [:ul [:li 1] [:li 2]]] (s/snapshot t)))
       (reset! on? true)
@@ -39,7 +39,7 @@
 
 (deftest classlist-merges-and-nil-props-drop
   (let [active? (s/atom true)]
-    (hic/with-render [t [:a.base {:class {:active active? :hidden false}
+    (hic/with-render [t [:a.base {:class {:active (fn [] @active?) :hidden false}
                                   :href nil}]]
       (is (= [:a {:class "base active"}] (s/snapshot t)))
       (reset! active? false)
@@ -80,7 +80,7 @@
 
 (deftest style-snapshot
   (let [c (s/atom "red")]
-    (hic/with-render [t [:p {:style {:font-size "12px" :color c}}]]
+    (hic/with-render [t [:p {:style {:font-size "12px" :color (fn [] @c)}}]]
       (is (= [:p {:style {"fontSize" "12px" "color" "red"}}] (s/snapshot t)))
       (reset! c "blue")
       (is (= "blue" (get-in (s/snapshot t) [1 :style "color"]))))))
@@ -91,10 +91,10 @@
   (let [todos (s/atom [])
         text  (s/atom "")]
     [:div
-     [:input {:value text :onChange (fn [v] (reset! text v))}]
+     [:input {:value (fn [] @text) :onChange (fn [v] (reset! text v))}]
      [:button.add {:onClick (fn [_] (swap! todos conj {:label @text}) (reset! text ""))} "add"]
      [:show {:when (fn [] (seq @todos)) :fallback [:p.empty "empty"]}
-      [:ul [:for {:each todos} (fn [todo _] [:li.todo (:label todo)])]]]]))
+      [:ul [:for {:each (fn [] @todos)} (fn [todo _] [:li.todo (:label todo)])]]]]))
 
 (deftest matcher-combinators-over-snapshots
   (hic/with-render [t [todo-app]]

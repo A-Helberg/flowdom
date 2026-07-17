@@ -180,11 +180,12 @@
         "atom was involved. Under " [:code "h"] " the deref is moved into "
         "an accessor at compile time (" [:code "{:value (fn [] @text)}"]
         "), which SolidJS wires to the DOM property."]
-       [:p "Alternatively, pass the s/atom itself un-deref'd — "
-        [:code "[:input {:value text}]"] " — and the walker bridges it. "
-        "Handler props (" [:code ":on*"] ", " [:code ":ref"] ") are never "
-        "rewritten by " [:code "h"] "; their values are callbacks, not "
-        "reactive reads."]]
+       [:p "The renderer never interprets refs, so "
+        [:code "[:input {:value text}]"] " passes the atom object itself "
+        "(dev builds warn) — the accessor is always explicit, whether "
+        [:code "h"] " writes it or you do. Handler props ("
+        [:code ":on*"] ", " [:code ":ref"] ") are never rewritten by "
+        [:code "h"] "; their values are callbacks, not reactive reads."]]
       :examples
       [{:source    (rc/inline "frontend/examples/atom_props.cljs")
         :component atom-props/example}]}]}
@@ -197,8 +198,9 @@
       [:<>
        [:p [:code "[:show {:when … :fallback …}]"] " wraps Solid's "
         [:code "<Show>"] ": children render while " [:code ":when"] " is "
-        "truthy, the fallback otherwise. " [:code ":when"] " accepts an "
-        "s/atom, a signal getter, or a plain value."]]
+        "truthy, the fallback otherwise. " [:code ":when"] " accepts a "
+        "signal getter — any zero-arg fn, e.g. " [:code "(fn [] @on?)"]
+        " — or a plain value."]]
       :examples
       [{:source    (rc/inline "frontend/examples/show.cljs")
         :component show/example}]}
@@ -220,9 +222,10 @@
       :prose
       [:<>
        [:p [:code "[:dynamic {:component …}]"] " renders a component chosen "
-        "at runtime — a tag string, a component fn, or an s/atom holding "
-        "either. When the atom changes, the element is swapped while its "
-        "children stay put."]]
+        "at runtime — a tag string, a component fn, or an accessor ("
+        [:code "(fn [] @tag)"] ") returning either. When the accessor's "
+        "value changes, the element is swapped while its children stay "
+        "put."]]
       :examples
       [{:source    (rc/inline "frontend/examples/dynamic.cljs")
         :component dynamic/example}]}]}
@@ -407,8 +410,9 @@
         "the component renders through Reagent's own pipeline, so its "
         "internal " [:code "r/atom"] " state and re-rendering work exactly "
         "as in a Reagent app."]
-       [:p "Props crossing the bridge follow the same rule as everywhere "
-        "else: s/atoms are watched, plain atoms (including "
+       [:p "Props crossing the bridge follow its own explicit contract "
+        "(React can't read accessors, so this is the one place refs are "
+        "consumed as refs): s/atoms are watched, plain atoms (including "
         [:code "r/atom"] "s used " [:em "as props"] ") are not — keep "
         "Reagent state inside the Reagent component and use s/atoms to "
         "feed it from outside."]]
@@ -430,8 +434,8 @@
         "one runs nothing. " [:code "sm/hold"] " bridges it into the "
         "UI as a read-only reactive ref that derefs exactly like an "
         [:code "s/atom"] ", so everything from the previous pages (bare "
-        "derefs under " [:code "h"] ", thunks, un-deref'd refs in "
-        "child slots) applies unchanged. solidrpc's queries return "
+        "derefs under " [:code "h"] ", thunks, accessor fns in "
+        "slots) applies unchanged. solidrpc's queries return "
         "flows, so this bridge is also how server data reaches the "
         "page."]
        [:p [:code "hold"] " is lazy and refcounted, like a Reagent "

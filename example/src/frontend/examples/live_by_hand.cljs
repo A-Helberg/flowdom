@@ -20,5 +20,5 @@
        [ui/button {:on-click #(notes/ping!)}
         "irrelevant tx"]]
       [:ul
-       [:for {:each all-notes}
+       [:for {:each (fn [] @all-notes)}
         (fn [text _i] [:li {:class "font-mono text-sm"} text])]]]))

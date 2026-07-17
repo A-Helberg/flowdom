@@ -27,10 +27,10 @@
      [:show {:when     (fn [] (not (sm/pending? notes<)))
              :fallback [:p {:class "text-sm text-gray-400"} "connecting…"]}
       [:ul {:class "notes space-y-1"}
-       [:for {:each notes<}
+       [:for {:each (fn [] @notes<)}
         (fn [note _] [:li {:class "font-mono text-sm"} note])]]]
      [:div {:class "flex gap-2"}
-      [:input {:value       draft
+      [:input {:value       (fn [] @draft)
                :placeholder "add a note…"
                :onInput     (fn [e] (reset! draft (event-value e)))}]
       [:button {:onClick (fn [_]

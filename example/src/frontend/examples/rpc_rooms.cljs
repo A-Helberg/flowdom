@@ -26,7 +26,7 @@
         (if (sm/pending? messages)
           [:p {:class "text-sm text-gray-400"} "connecting…"]
           [:ul {:class "space-y-1"}
-           [:for {:each messages}
+           [:for {:each (fn [] @messages)}
             (fn [msg _i] [:li {:class "font-mono text-sm"} msg])]])
         [:form {:class    "flex gap-2"
                 :onSubmit (fn [e]
