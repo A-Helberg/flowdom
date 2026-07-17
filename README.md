@@ -1,128 +1,74 @@
-# solidclj
+# flowdom
 
-> **Not production ready.** APIs are unstable and several rough edges remain.
+> **Experimental.** A from-scratch rewrite; APIs are unstable.
 
-ClojureScript bindings for [SolidJS](https://www.solidjs.com/) — Reagent-style hiccup syntax over SolidJS's fine-grained reactivity, with a Missionary interop layer and a thin SSE transport for backend-driven streams.
+A fine-grained reactive UI library for Clojure and ClojureScript,
+built directly on [missionary](https://github.com/leonoel/missionary).
+No virtual DOM, no diffing, no compiler, no borrowed signal runtime.
+The UI is a tree of missionary processes; cancellation is the entire
+lifecycle model.
 
-See the **[Interactive Docs](https://a-helberg.github.io/solidclj/)** (code in the example folder) for a full walkthrough with live examples.
+The design rationale lives in
+[docs/missionary-native-ui.md](docs/missionary-native-ui.md); the
+tutorial with live examples is the app in `example/`.
 
----
+## The mental model
 
-## The one rule
+Three rules:
 
-In Reagent the component function re-runs on state changes. In SolidJS it runs **once**. Wrap dynamic regions in `(fn [])` so SolidJS knows what to track:
-
-```clojure
-(defonce temp (s/atom 21))
-
-(defn thermometer []
-  [:div
-   [:p "mounted at: " @temp "°C"]   ; snapshot — never updates
-   (fn [] [:p "now: " @temp "°C"])]) ; reactive thunk — updates on swap!
-```
-
----
-
-## Getting started
-
-Depend on the library as a git dep, pinned to a release tag. A minimal [shadow-cljs](https://shadow-cljs.github.io/docs/UsersGuide.html) project is four files. The app itself, `src/app/core.cljs`:
+1. **Components are plain functions** that run once and return hiccup — data.
+2. **Dynamic positions are `(rx ...)` blocks** embedded in that data.
+   Inside one, `(? src)` reads an atom, a missionary flow, or another
+   rx — at any call depth, through ordinary helper functions — and
+   subscribes the block. A change re-runs the block and patches only
+   its own DOM region. Propagation is synchronous: when `swap!`
+   returns, the DOM is updated.
+3. **Everything is a missionary flow.** An rx *is* a flow; mounting
+   subscribes, unmounting cancels every process in the subtree.
+   Timers, SSE, websockets — anything expressible as a flow plugs in
+   with `(rx (? my-flow))` and gets setup and teardown for free.
 
 ```clojure
 (ns app.core
-  (:require [solidclj.api :as s]))
-
-(defonce clicks (s/atom 0))
+  (:require [flowdom.dom :as dom]
+            [flowdom.rx :refer [rx ?]]))
 
 (defn counter []
-  [:button {:onClick #(swap! clicks inc)}
-   (fn [] [:span "clicks: " @clicks])])
+  (let [n (atom 0)]
+    [:button {:on-click (fn [_] (swap! n inc))}
+     "clicks: " (rx (? n))]))
 
-(defn init []
-  (s/render [counter] (.getElementById js/document "app")))
+(dom/mount [counter] (js/document.getElementById "app"))
 ```
 
-And three files of scaffolding:
+Control flow is data (an rx emitting different hiccup swaps the
+subtree), keyed lists are `for-by`, pending async renders the nearest
+`:fallback`, and errors travel as values to the nearest
+`:error-boundary`.
 
-<details>
-<summary><code>deps.edn</code></summary>
+## Testing without a browser
+
+The same components render on the JVM, where the tree is a sampled
+value instead of DOM — handlers included, as data:
 
 ```clojure
-{:paths ["src"]
- :deps  {thheller/shadow-cljs {:mvn/version "2.28.17"}
-         io.github.a-helberg/solidclj
-         {:git/url   "https://github.com/A-Helberg/solidclj"
-          :git/tag   "v0.0.1"
-          :git/sha   "xxxxxxx"  ; git rev-parse --short v0.0.1
-          :deps/root "lib/solidclj"}}}
+(with-render [t [counter]]
+  ((get-in (snapshot t) [1 :on-click]) :click)
+  (is (= "1" (str (nth (snapshot t) 3)))))
 ```
 
-</details>
+`await` blocks until the tree satisfies a predicate, for flows that
+emit from other threads. See `lib/flowdom/test/`.
 
-<details>
-<summary><code>shadow-cljs.edn</code></summary>
+## Layout
 
-```clojure
-{:deps true          ; resolve dependencies via deps.edn
- :dev-http {8080 "public"}
- :builds
- {:app {:target  :browser
-        :modules {:app {:init-fn app.core/init}}}}}
-```
+    lib/flowdom/          the library (rx kernel, interpreter, DOM consumer)
+    example/              the interactive guide, itself written in flowdom
+    docs/                 design document
 
-</details>
+## Getting started
 
-<details>
-<summary><code>public/index.html</code></summary>
-
-```html
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>solidclj app</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script src="/js/app.js"></script>
-  </body>
-</html>
-```
-
-</details>
-
-SolidJS itself comes from npm. Install it and start the watcher:
-
-```sh
-bun add solid-js             # or: npm install solid-js
-bun add -d shadow-cljs
-bunx shadow-cljs watch app   # http://localhost:8080
-```
-
----
-
-## Monorepo layout
-
-```
-lib/solidclj          Core: hiccup walker, s/atom, Missionary bridge
-lib/solidrpc          SSE transport: Manifold stream → SolidJS signal
-lib/solidreitrouter   Thin reitit wrapper for client-side routing
-lib/solidclj-docs     Shared UI for the docs / example app
-example/              Reference app and interactive tutorial
-```
-
----
-
-## Toolchain
-
-- **ClojureScript** via [shadow-cljs](https://shadow-cljs.github.io/docs/UsersGuide.html)
-- **Bun** for JS deps and dev server
-- **Taskfile** — see `Taskfile.yml` at root and per-lib
-- **mise** for tool version pinning (`mise.toml`)
-
----
-
-## License
-
-Copyright © 2026 Andre Helberg
-
-Distributed under the [Eclipse Public License 2.0](LICENSE).
+    task bootstrap        # toolchain (mise) + JS deps
+    task example          # guide at http://localhost:1380
+    task test             # JVM test suite
+    task test-dom         # DOM consumer tests (happy-dom, node)
