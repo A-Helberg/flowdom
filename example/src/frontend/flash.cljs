@@ -8,9 +8,9 @@
   back-to-back changes without reflow tricks or timers. Mutations caused
   by the flash classes themselves are filtered out, so the observer
   never feeds back into itself."
-  (:require [solidclj.api :as s]))
+  (:require [flowdom.rx :refer [rx ?]]))
 
-(defonce enabled? (s/atom true))
+(defonce enabled? (atom true))
 
 (def ^:private flash-tokens #{"flash-a" "flash-b"})
 
@@ -88,7 +88,7 @@
   []
   [:div {:class "mt-8 pt-4 border-t border-gray-200"}
    [:label {:class "flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none"}
-    [:input {:type     "checkbox"
-             :checked  (fn [] @enabled?)
-             :onChange #(swap! enabled? not)}]
+    [:input {:type      "checkbox"
+             :checked   (rx (? enabled?))
+             :on-change #(swap! enabled? not)}]
     "Flash DOM updates"]])

@@ -8,8 +8,8 @@
   - `all-notes<` lifts it: the `<` says flow. Its db argument is the
     anchor — a real db value on the JVM, an opaque token on the
     client (solidrpc.transit exchanges the two at the wire), or nil
-    for no floor (the feed's head supplies the present). Hold it at
-    point of use: (sm/hold (all-notes< db)).
+    for no floor (the feed's head supplies the present). Read it at
+    point of use: (rx (? (all-notes< db))).
   - The facade is registered under its own symbol — the :cljs branch
     queries `all-notes<`, which the registry resolves to this same
     var, whose :clj branch produces the flow — so the two sides
@@ -20,7 +20,7 @@
   (:require #?@(:clj  [[datomic.api :as d]
                        [server.notes :as store]
                        [solidrpc.live :as live]]
-                :cljs [[solidrpc.call.solidjs :as call]])))
+                :cljs [[solidrpc.client :as call]])))
 
 #?(:clj
    (defn all-notes

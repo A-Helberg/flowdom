@@ -1,30 +1,28 @@
 (ns frontend.examples.rpc-chat
-  (:require-macros [solidclj.hiccup-macros :refer [h]])
   ;; no rpc in sight: api.chat wraps the queries and commands in
   ;; plain functions, so this component doesn't know it's talking to a
   ;; server (or, on this static site, to the fake one).
   (:require [api.chat :as chat]
-            [solidclj.missionary :as sm]
+            [flowdom.rx :refer [rx ?]]
             [solidclj.docs.ui :as ui]))
 
-;; (chat/messages) returns a missionary flow; hold bridges it. Lazy end
-;; to end: the "connection" opens when this page first renders and
-;; closes when you navigate away.
-(defonce messages (sm/hold (chat/messages) :initial []))
+;; (chat/messages) returns a shared missionary flow. Lazy end to end:
+;; the connection opens when this page first renders and closes when
+;; you navigate away.
+(defonce messages (chat/messages))
 
 (defn example []
-  (h [:div {:class "space-y-3"}
-      (if (sm/pending? messages)
-        [:p {:class "text-sm text-gray-400"} "connecting…"]
-        [:ul {:class "space-y-1"}
-         [:for {:each (fn [] @messages)}
-          (fn [msg _i]
-            [:li {:class "font-mono text-sm"} msg])]])
-      ;; writes are one-shot commands — an uncontrolled form is plenty
-      [:form {:class    "flex gap-2"
-              :onSubmit (fn [e]
-                          (.preventDefault e)
-                          (chat/send! (.get (js/FormData. (.-target e)) "message"))
-                          (.reset (.-target e)))}
-       [ui/input {:name "message" :placeholder "say something…"}]
-       [ui/button {} "Send"]]]))
+  [:div {:class    "space-y-3"
+         :fallback [:p {:class "text-sm text-gray-400"} "connecting…"]}
+   ;; pending until the first answer arrives → the :fallback renders
+   (rx [:ul {:class "space-y-1"}
+        (for [msg (? messages)]
+          [:li {:class "font-mono text-sm"} msg])])
+   ;; writes are one-shot commands — an uncontrolled form is plenty
+   [:form {:class     "flex gap-2"
+           :on-submit (fn [e]
+                        (.preventDefault e)
+                        (chat/send! (.get (js/FormData. (.-target e)) "message"))
+                        (.reset (.-target e)))}
+    [ui/input {:name "message" :placeholder "say something…"}]
+    [ui/button {} "Send"]]])

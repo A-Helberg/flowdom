@@ -1,6 +1,6 @@
 (ns frontend.test-setup
-  "Installs happy-dom globals so SolidJS's renderer has a DOM to talk to.
-  Must be required before anything that touches solid-js/web at load time."
+  "Installs happy-dom globals (document, MutationObserver, rAF, …) for
+  tests that touch them at load time — e.g. frontend.flash's observer."
   (:require ["happy-dom" :refer [Window]]))
 
 (defonce ^:private window

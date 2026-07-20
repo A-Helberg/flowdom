@@ -1,5 +1,5 @@
 (entities
-(live)
+(live),
 (md:hidden)
 (optional)
 (prose
@@ -17,7 +17,6 @@
 :pages
 :placeholder
 :prose
-:ref
 :sections
 :sidebar-footer
 :source
@@ -31,6 +30,7 @@ Docs
 HTML
 Mobile-only
 Props:
+Rendered
 Small
 Static
 Tailwind
@@ -52,7 +52,6 @@ Usage:
 `open?`
 `source`
 a
-accessor).
 active:bg-blue-700
 an
 antialiased
@@ -106,7 +105,7 @@ f
 fixed
 flex
 flex-1
-fn
+flowdom.
 focus
 focus:outline-2
 focus:outline-blue-500
@@ -137,16 +136,17 @@ input.
 inset-0
 inset-y-0
 instead
-is
 items-baseline
 items-center
 justify-center
+keeps
 label
 language-clojure
 leading-relaxed
 left,
 left-0
 live
+live).
 m-0
 markup
 max-h-screen
@@ -165,6 +165,7 @@ md:z-auto
 menu
 min-h-screen
 min-w-0
+ml-1.5
 mt-2
 mt-5
 mt-8
@@ -203,6 +204,8 @@ right.
 rounded
 rounded-lg
 rounded-md
+rx
+rx,
 s
 screens).
 select-none
@@ -213,13 +216,12 @@ shell
 shell:
 showing
 sidebar
-signal
 slide-in
 sm:px-8
 sm:py-10
 small
 so
-solid-js
+soon
 source
 space-y-0.5
 sticky
@@ -230,7 +232,9 @@ s}]
 taught
 text
 text-2xl
+text-[10px]
 text-[11px]
+text-amber-600
 text-blue-700
 text-gray-100
 text-gray-400
@@ -248,7 +252,9 @@ through
 title
 to
 top-0
+tracking-wide
 tracking-wider
+transform
 transition-transform
 translate-x-0
 uncontrolled

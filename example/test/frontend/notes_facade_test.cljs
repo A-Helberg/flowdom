@@ -1,31 +1,25 @@
 (ns frontend.notes-facade-test
-  "The CLJS half of the api.notes facade: construction is pure — the
-  facade returns a FLOW (a recipe), and holding it is still lazy. No
-  server, no EventSource, no network in this test; actually
-  subscribing needs the real server and is covered by the JVM side
-  (in-process) plus manual full-stack runs. In cljs builds api.notes
-  resolves to its browser twin (api/notes.cljs), so that twin — and
-  the cljc notes-view on top of it — is what this ns holds to the
-  laziness contract; the real :cljs branch (call/query) is one line,
+  "The CLJS half of the api.notes facade. Construction is pure — the
+  facade returns a FLOW (a recipe) and building it runs nothing; no
+  EventSource, no network. In cljs builds api.notes resolves to its
+  browser twin (api/notes.cljs) — the real solidrpc.live combinator
+  over the fake datomic — so this ns can also MOUNT the real
+  notes-view against it and watch a write come back through the fake
+  tx-report stream; the real :cljs branch (client/query) is one line,
   exercised full-stack. The marker facades below are the real cljc."
   (:require [cljs.test :refer-macros [deftest is]]
+            ["happy-dom" :refer [Window]]
             [api.notes :as notes]
             [api.server-info :as info]
             [api.viewer :as viewer]
-            [frontend.notes-view :as nv]
-            [solidclj.satom :as satom]
-            [solidclj.missionary :as sm]))
+            [flowdom.dom :as dom]
+            [frontend.notes-view :as nv]))
 
 (deftest facade-returns-a-lazy-flow
-  ;; happy-dom provides no EventSource — if constructing the flow (or
-  ;; holding it) opened a connection, this would throw. Laziness IS
-  ;; the test.
-  (let [flow (notes/all-notes< nil)]
-    (is (fn? flow) "a flow is a recipe — plain value, nothing running")
-    (let [r (sm/hold flow :initial [])]
-      (is (satisfies? satom/IReactiveAtom r) "held, it crosses the hiccup bridge")
-      (is (true? (sm/pending? r)) "untracked read: no subscription, still pending")
-      (is (= [] @r) ":initial served before any emission"))))
+  ;; happy-dom provides no EventSource — if constructing the flow
+  ;; opened a connection, this would throw. Laziness IS the test.
+  (is (fn? (notes/all-notes< nil))
+      "a flow is a recipe — plain value, nothing running"))
 
 (deftest notes-view-is-pure-data-until-mount
   ;; calling the component builds hiccup + recipes, runs no effects
@@ -38,3 +32,21 @@
   ;; flows are recipes — no connection until something subscribes
   (is (fn? (viewer/whoami< (viewer/viewer-token))))
   (is (fn? (info/server-info< (info/server-info-token)))))
+
+(deftest notes-view-mounts-live-against-the-stand-ins
+  ;; the browser twin runs the REAL live combinator over the fake
+  ;; datomic: mounting subscribes (the head report answers
+  ;; synchronously), a write lands through the fake tx-report stream,
+  ;; and unmounting releases the subscription.
+  (let [win  (Window.)
+        doc  (.-document win)
+        el   (.createElement doc "div")
+        note (str "facade-live-" (gensym))]
+    (.appendChild (.-body doc) el)
+    (let [d (dom/mount [nv/notes-view nil] el)]
+      (try
+        (is (some? (.querySelector el "input")) "the form is up")
+        (notes/add-note! note)
+        (is (re-find (re-pattern note) (.-textContent el))
+            "the write came back through the tx-report stream")
+        (finally (d))))))

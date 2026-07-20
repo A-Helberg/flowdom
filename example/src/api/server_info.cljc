@@ -8,7 +8,7 @@
   identical."
   (:require [missionary.core :as m]
             [solidrpc.transit :as transit]
-            #?(:cljs [solidrpc.call.solidjs :as call])))
+            #?(:cljs [solidrpc.client :as call])))
 
 (def tag "app/server-info")
 

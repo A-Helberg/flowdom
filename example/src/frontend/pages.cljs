@@ -1,7 +1,13 @@
 (ns frontend.pages
   "The guide's content. Each page is prose plus example blocks whose
   source is inlined at compile time with shadow.resource/inline — the
-  code you read IS the code that runs, they cannot drift apart."
+  code you read IS the code that runs, they cannot drift apart.
+
+  Pages not yet ported to flowdom stay in the sidebar with a `soon`
+  badge and render a placeholder with their original solidclj sources;
+  their original prose is preserved, commented out, at the bottom of
+  this file — porting a page = write the example, uncomment the prose,
+  update it, drop the stub."
   (:require [shadow.resource :as rc]
             [solidclj.docs.ui :as ui]
             [frontend.examples.perf :as perf]
@@ -9,9 +15,8 @@
             [frontend.examples.elements :as elements]
             [frontend.examples.thunks :as thunks]
             [frontend.examples.satom :as satom]
-            [frontend.examples.satom-h :as satom-h]
+            [frontend.examples.helpers :as helpers]
             [frontend.examples.atom-props :as atom-props]
-            [frontend.examples.h-macro :as h-macro]
             [frontend.examples.show :as show]
             [frontend.examples.switch :as switch]
             [frontend.examples.dynamic :as dynamic]
@@ -19,54 +24,58 @@
             [frontend.examples.index-list :as index-list]
             [frontend.examples.seqs :as seqs]
             [frontend.examples.fragments :as fragments]
-            [frontend.examples.refs :as refs]
             [frontend.examples.form-uncontrolled :as form-uncontrolled]
             [frontend.examples.form-controlled :as form-controlled]
-            [frontend.examples.portal :as portal]
             [frontend.examples.suspense :as suspense]
             [frontend.examples.error-boundary :as error-boundary]
-            [frontend.examples.js-components :as js-components]
+            [frontend.examples.missionary-hold :as missionary-hold]
+            [frontend.examples.missionary-resource :as missionary-resource]
+            [frontend.examples.missionary-tracked :as missionary-tracked]
+            [frontend.examples.portal :as portal]
+            [frontend.examples.on-mount :as on-mount]
             [frontend.examples.react-basic :as react-basic]
             [frontend.examples.react-chart :as react-chart]
             [frontend.examples.reagent-counter :as reagent-counter]
-            [frontend.examples.missionary-hold :as missionary-hold]
-            [frontend.examples.missionary-resource :as missionary-resource]
             [frontend.examples.missionary-spawn :as missionary-spawn]
-            [frontend.examples.missionary-tracked :as missionary-tracked]
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-by-hand :as live-by-hand]
-            [frontend.examples.live-notes :as live-notes]))
+            [frontend.examples.live-notes :as live-notes]
+            ))
 
 (def sections
   [{:title "Introduction"
     :pages
     [{:id    :home
-      :title "Why solidclj?"
+      :title "Why flowdom?"
       :body
       [:div
        [:div {:class "prose prose-gray max-w-none"}
-        [:p "solidclj is Reagent-style hiccup on top of SolidJS. You write plain "
-         "ClojureScript functions that return hiccup vectors — but instead of "
-         "re-rendering components and diffing a virtual DOM, SolidJS wires "
-         "fine-grained subscriptions directly to the DOM nodes that depend on "
-         "each piece of state. When state changes, only those nodes update."]
-        [:p "The grid below makes the difference visible. It is 2500 dots; 8 random "
-         "dots change color every second. Every DOM node that changes gets a "
-         "brief blue flash (that's global on this site — toggle it in the "
-         "sidebar). On the Solid side, a tick touches exactly one dot. On the "
-         "React side the state lives at the top, so every tick re-runs the whole "
-         "grid — each dot is re-stamped with the render pass that produced it, "
-         "which is the same thing React DevTools' “highlight updates” shows."]]
+        [:p "flowdom is Reagent-style hiccup over fine-grained "
+         "reactivity, built directly on "
+         [:a {:href "https://github.com/leonoel/missionary"} "missionary"]
+         ". You write plain ClojureScript functions that return hiccup "
+         "vectors — but instead of re-rendering components and diffing a "
+         "virtual DOM, flowdom wires small processes directly to the DOM "
+         "nodes that depend on each piece of state. When state changes, "
+         "only those nodes update."]
+        [:p "The grid below makes the granularity visible. It is 2500 "
+         "dots; 8 random dots change color every second. Every DOM node "
+         "that changes gets a brief blue flash (that's global on this "
+         "site — toggle it in the sidebar). A tick touches exactly one "
+         "dot: no component re-runs, no diff, no other node is visited. "
+         "The React tab shows where the comparison grid returns once the "
+         "React bridge is ported — its source is below for contrast: "
+         "state at the top, so every tick re-stamps all 2500 dots."]]
        [perf/demo]
        [:details {:class "mt-6 border border-gray-200 rounded-lg overflow-hidden"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "Solid grid source"]
-        [ui/code-block (rc/inline "frontend/examples/perf_solid.cljs")]]
+         "flowdom grid source"]
+        [ui/code-block (rc/inline "frontend/examples/perf_flowdom.cljs")]]
        [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "React grid source"]
+         "React grid source (not yet ported — for contrast)"]
         [ui/code-block (rc/inline "frontend/examples/perf_react.cljs")]]]}]}
 
    {:title "Basics"
@@ -80,9 +89,9 @@
         "in the first slot of a vector invokes it with the remaining elements "
         "as positional arguments."]
        [:p "Unlike Reagent, the component function runs " [:strong "once"] ". "
-        "It builds the DOM; afterwards only the reactive regions inside it "
-        "(thunks, signals, atoms — covered in the Reactivity section) ever "
-        "run again."]]
+        "It builds the tree; afterwards only the reactive regions inside it "
+        "(the " [:code "rx"] " blocks, covered in the Reactivity section) "
+        "ever run again."]]
       :examples
       [{:source    (rc/inline "frontend/examples/hello.cljs")
         :component hello/example}]}
@@ -105,87 +114,90 @@
    {:title "Reactivity"
     :pages
     [{:id    :thunks
-      :title "Signals & thunks"
+      :title "rx & ?"
       :prose
       [:<>
-       [:p "The one rule to remember: SolidJS does " [:strong "not"] " re-run "
-        "your component when state changes. You mark the dynamic region of the "
-        "tree by wrapping it in a " [:code "(fn [] …)"] " — that thunk is what "
-        "re-runs when a signal read inside it changes."]
-       [:p "Solid's own primitives work directly: " [:code "createSignal"]
-        " returns a getter/setter pair, and a getter placed in a child slot "
-        "is live on its own."]
-       [:p "Watch the flashes as you increment: the count paragraph only "
-        "updates its text, and the even/odd thunk swaps in a fresh "
-        [:code "<p>"] " because it returns a new element each run. The "
-        "button never flashes — the component function ran once, and "
-        "nothing outside a thunk is ever touched again."]]
+       [:p "The one rule to remember: flowdom does " [:strong "not"] " re-run "
+        "your component when state changes. You mark the dynamic region of "
+        "the tree with " [:code "(rx …)"] " — a restartable block. Inside "
+        "it, " [:code "(? src)"] " reads a reactive source (an atom, a "
+        "missionary flow, or another rx) " [:em "and"] " subscribes the "
+        "block; when any recorded dependency changes, the block re-runs "
+        "from scratch and its region of the DOM is patched."]
+       [:p "Granularity follows from where you put the blocks. An rx whose "
+        "value is a scalar updates a single text node; an rx that returns "
+        "different hiccup swaps its subtree, cancelling everything under "
+        "the old one. Re-runs are deduplicated with " [:code "="] " — a "
+        "body that computes an equal value emits nothing."]
+       [:p "Propagation is synchronous: by the time " [:code "swap!"]
+        " returns, the DOM is updated. Watch the flashes as you "
+        "increment: the count line touches one text node, the even/odd rx "
+        "swaps in a fresh " [:code "<p>"] " because it returns a new "
+        "element each time, and the button never flashes — the component "
+        "function ran once."]]
       :examples
       [{:source    (rc/inline "frontend/examples/thunks.cljs")
         :component thunks/example}]}
 
      {:id    :satom
-      :title "Reactive atoms — s/atom"
+      :title "Plain atoms"
       :prose
       [:<>
-       [:p [:code "s/atom"] " is the Reagent idiom brought over: a real atom ("
-        [:code "swap!"] ", " [:code "reset!"] ", " [:code "add-watch"]
-        " and validators all behave exactly like " [:code "cljs.core/atom"]
-        ") that " [:strong "also"] " subscribes any reactive scope that derefs "
-        "it. " [:code "(fn [] @my-atom)"] " is a live view of the atom. It is "
-        "the " [:em "only"] " atom the renderer knows about — plain "
-        [:code "cljs.core/atom"] "s are ignored (with a dev-time warning)."]
-       [:p "Resetting to an " [:code "="] " value notifies watchers (normal "
-        "atom semantics) but does not re-run reactive scopes, so no-op updates "
-        "are free. One difference from Reagent: the component body is not a "
-        "reactive scope here, so a bare " [:code "@a"] " at the top level of a "
-        "component is a one-shot snapshot — the deref must run inside a "
-        "thunk. Writing those thunks by hand gets old; the next page "
-        "introduces the macro that writes them for you."]]
+       [:p "State lives in ordinary " [:code "cljs.core/atom"] "s — no "
+        "special reactive atom type. " [:code "swap!"] ", " [:code "reset!"]
+        ", " [:code "add-watch"] ", validators: everything behaves exactly "
+        "as it always does, because it " [:em "is"] " the ordinary atom. "
+        "What makes one reactive is where it's read: " [:code "(? a)"]
+        " inside an rx subscribes the block; a bare " [:code "@a"]
+        " anywhere is a plain one-shot read."]
+       [:p "Dependencies are re-recorded on every run, so a branch that "
+        "stops reading an atom unsubscribes from it automatically — and a "
+        [:code "reset!"] " to an equal value notifies watchers (normal "
+        "atom semantics) but re-runs nothing."]]
       :examples
       [{:source    (rc/inline "frontend/examples/satom.cljs")
         :component satom/example}]}
 
-     {:id    :h-macro
-      :title "The h macro"
+     {:id    :helpers
+      :title "Reads cross functions"
       :prose
       [:<>
-       [:p "The " [:code "h"] " macro walks a hiccup literal at compile "
-        "time and wraps list-form expressions in child positions — like the "
-        [:code "(if …)"] " below — into reactive thunks for you. Explicit "
-        [:code "(fn [] …)"] " forms are left alone, so you can mix both "
-        "styles and keep fine-grained control where you want it."]
-       [:p "A bare " [:code "@temp"] " reads as " [:code "(deref temp)"]
-        " — also a list form — so derefs are wrapped too, each into its own "
-        "thunk. The second example is the previous page's thermometer with "
-        "the thunks gone: note how the temperature line now updates a "
-        "single text node instead of swapping the paragraph, while the "
-        [:code "(if …)"] " is wrapped as a whole — the deref inside it "
-        "feeds a comparison, and the re-runnable unit is the branch."]]
+       [:p "Tracking rides dynamic scope, not syntax. A helper called from "
+        "an rx block reads sources with " [:code "?"] " like any other "
+        "value — at any call depth, through ordinary function signatures. "
+        "There is no macro rewriting your code, no lifting values into a "
+        "reactive wrapper type, and no split between \"reactive functions\" "
+        "and plain ones."]
+       [:p "This is the property that keeps reactive code looking like "
+        "ordinary Clojure: extract a helper, it still works; inline it "
+        "back, nothing changes. The only boundary that matters is the "
+        [:code "rx"] " block itself — it delimits what re-runs."]
+       [:p "It is also why flowdom has no macro that writes the rx "
+        "blocks for you by rewriting hiccup literals. Such a macro can "
+        "only see the literal — helpers would need different rules, "
+        "splitting the language in two — and the trap it would guard "
+        "against can't happen here: a " [:code "?"] " outside an rx "
+        "throws immediately instead of going silently stale. And the "
+        "block is worth seeing: where you place " [:code "rx"] " is the "
+        "update granularity, and each block is a missionary flow. One "
+        "rule, no exceptions."]]
       :examples
-      [{:title     "Auto-wrapped control flow"
-        :source    (rc/inline "frontend/examples/h_macro.cljs")
-        :component h-macro/example}
-       {:title     "Bare derefs"
-        :source    (rc/inline "frontend/examples/satom_h.cljs")
-        :component satom-h/example}]}
+      [{:source    (rc/inline "frontend/examples/helpers.cljs")
+        :component helpers/example}]}
 
      {:id    :atom-props
-      :title "Atoms in props"
+      :title "Reactive props"
       :prose
       [:<>
        [:p "Why can't " [:code "{:value @text}"] " just work on its own? "
         "Because " [:code "@text"] " evaluates while your component body "
         "runs — the renderer receives the string, with no way to know an "
-        "atom was involved. Under " [:code "h"] " the deref is moved into "
-        "an accessor at compile time (" [:code "{:value (fn [] @text)}"]
-        "), which SolidJS wires to the DOM property."]
-       [:p "The renderer never interprets refs, so "
-        [:code "[:input {:value text}]"] " passes the atom object itself "
-        "(dev builds warn) — the accessor is always explicit, whether "
-        [:code "h"] " writes it or you do. Handler props ("
-        [:code ":on*"] ", " [:code ":ref"] ") are never rewritten by "
-        [:code "h"] "; their values are callbacks, not reactive reads."]]
+        "atom was involved. An rx in the prop value is the live version: "
+        [:code "{:value (rx (? text))}"] " writes only that DOM property "
+        "when the atom changes; the element is never rebuilt."]
+       [:p "Handler props (" [:code ":on*"] ") are never treated as "
+        "reactive — their values are callbacks. Everything else accepts "
+        "an rx."]]
       :examples
       [{:source    (rc/inline "frontend/examples/atom_props.cljs")
         :component atom-props/example}]}]}
@@ -193,39 +205,38 @@
    {:title "Control flow"
     :pages
     [{:id    :show
-      :title "Show"
+      :title "Conditionals"
       :prose
       [:<>
-       [:p [:code "[:show {:when … :fallback …}]"] " wraps Solid's "
-        [:code "<Show>"] ": children render while " [:code ":when"] " is "
-        "truthy, the fallback otherwise. " [:code ":when"] " accepts a "
-        "signal getter — any zero-arg fn, e.g. " [:code "(fn [] @on?)"]
-        " — or a plain value."]]
+       [:p "There are no control-flow components. An rx that emits "
+        "different hiccup " [:em "is"] " the conditional: when the branch "
+        "flips, the old subtree's processes are cancelled (that is the "
+        "entire unmount story — nothing leaks) and the new content "
+        "mounts."]]
       :examples
       [{:source    (rc/inline "frontend/examples/show.cljs")
         :component show/example}]}
 
      {:id    :switch
-      :title "Switch & Match"
+      :title "Branches"
       :prose
       [:<>
-       [:p "For more than two branches, " [:code "[:switch]"] " renders the "
-        "first " [:code "[:match {:when …}]"] " whose condition is truthy, "
-        "or the fallback when none is. " [:code ":match"] " is only valid "
-        "directly inside " [:code ":switch"] "."]]
+       [:p "More than two branches is ordinary Clojure — " [:code "case"]
+        ", " [:code "cond"] ", whatever fits. The rx re-runs when "
+        [:code "(? status)"] " changes and the renderer swaps to whichever "
+        "tree came back. Nothing new to learn is the feature."]]
       :examples
       [{:source    (rc/inline "frontend/examples/switch.cljs")
         :component switch/example}]}
 
      {:id    :dynamic
-      :title "Dynamic"
+      :title "Dynamic tags"
       :prose
       [:<>
-       [:p [:code "[:dynamic {:component …}]"] " renders a component chosen "
-        "at runtime — a tag string, a component fn, or an accessor ("
-        [:code "(fn [] @tag)"] ") returning either. When the accessor's "
-        "value changes, the element is swapped while its children stay "
-        "put."]]
+       [:p "Tags are data — keywords in the first slot of a vector — so a "
+        "runtime-chosen element is an atom holding a keyword and an rx "
+        "using it in tag position. When it changes, the element is "
+        "rebuilt with the same children."]]
       :examples
       [{:source    (rc/inline "frontend/examples/dynamic.cljs")
         :component dynamic/example}]}]}
@@ -233,33 +244,32 @@
    {:title "Lists"
     :pages
     [{:id    :for
-      :title "Keyed lists — :for"
+      :title "Keyed lists — for-by"
       :prose
       [:<>
-       [:p [:code "[:for {:each xs} render-fn]"] " wraps Solid's "
-        [:code "<For>"] ", which keys rows by item identity: swap!s that "
-        "reuse existing items are diffed in place, and reordering moves DOM "
-        "nodes instead of rebuilding them."]
-       [:p "The render fn receives " [:code "(item index)"] " where "
-        [:code "index"] " is a getter — call it as " [:code "(index)"]
-        " inside a thunk to keep the position live. Watch the flashes when "
-        "you reverse: only the numbers update, the row text doesn't."]]
+       [:p [:code "(for-by key-fn items body)"] " renders a keyed "
+        "collection: " [:code "items"] " is an atom, flow, rx, or plain "
+        "vector; " [:code "body"] " runs " [:em "once per key"] " and "
+        "receives an atom-like holding that item's latest value — read it "
+        "with " [:code "?"] " inside an rx."]
+       [:p "An item whose value changed ticks only its own slots; "
+        "reordering moves DOM nodes, and each row's processes and local "
+        "state move with it; removed keys are cancelled, new keys mount. "
+        "Watch the flashes when you reverse: rows move, but no row "
+        "content re-renders."]]
       :examples
       [{:source    (rc/inline "frontend/examples/for_list.cljs")
         :component for-list/example}]}
 
      {:id    :index
-      :title "Position-keyed lists — :index"
+      :title "Position-keyed lists"
       :prose
       [:<>
-       [:p [:code "[:index]"] " is " [:code ":for"] "'s sibling, keyed by "
-        [:em "position"] " instead of identity: each row's DOM node is "
-        "reused and only its content updates. Use it when items mutate in "
-        "place; use " [:code ":for"] " when identities are stable and may "
-        "move around."]
-       [:p "Mind the flipped signature: the render fn gets "
-        [:code "(item-getter index-number)"] " — the opposite of "
-        [:code ":for"] "."]]
+       [:p "Position-keying is " [:code "for-by"] " with the index as the "
+        "key: each row's DOM node is reused and only its content updates "
+        "when a new value lands in that slot. Use it when the position is "
+        "the identity (sensor readouts, spreadsheet cells); key by id "
+        "when items keep their identity while moving around."]]
       :examples
       [{:source    (rc/inline "frontend/examples/index_list.cljs")
         :component index-list/example}]}
@@ -271,8 +281,7 @@
        [:p "Any seq — like a " [:code "(for …)"] " comprehension — flattens "
         "into the parent's children. This renders once and is not keyed, so "
         "it's right for static lists; for changing collections reach for "
-        [:code ":for"] " / " [:code ":index"] ". Add " [:code "^{:key …}"]
-        " metadata to each vector to satisfy the dev-time checker."]]
+        [:code "for-by"] "."]]
       :examples
       [{:source    (rc/inline "frontend/examples/seqs.cljs")
         :component seqs/example}]}]}
@@ -290,23 +299,32 @@
       [{:source    (rc/inline "frontend/examples/fragments.cljs")
         :component fragments/example}]}
 
-     {:id    :refs
-      :title "Refs"
+     {:id    :dom-node
+      :title "DOM nodes"
       :prose
       [:<>
-       [:p [:code ":ref"] " takes a function that Solid calls with the DOM "
-        "element once it exists. The usual pattern is stashing it in an atom "
-        "— note this atom holds a DOM node, not app state, so nothing here "
-        "is reactive."]]
+       [:p [:code ":on-mount"] " takes a function that flowdom calls with the "
+        "element once it's created and inserted into the document — the escape "
+        "hatch to the raw DOM for focus, measurement, or a non-flowdom library. "
+        "The usual pattern stashes the node in an atom; note this atom holds a "
+        "DOM node, not app state, so nothing here is reactive."]
+       [:p "Return a function and it becomes the node's teardown, cancelled "
+        "with the element's other processes when it unmounts — symmetric setup "
+        "and cleanup for things like observers:"]
+       [ui/code-block
+        "[:div {:on-mount (fn [el]
+                   (let [ro (js/ResizeObserver. on-resize)]
+                     (.observe ro el)
+                     #(.disconnect ro)))}]"]]
       :examples
-      [{:source    (rc/inline "frontend/examples/refs.cljs")
-        :component refs/example}]}
+      [{:source    (rc/inline "frontend/examples/on_mount.cljs")
+        :component on-mount/example}]}
 
      {:id    :forms
       :title "Forms"
       :prose
       [:<>
-       [:p "Because SolidJS never re-runs your component, uncontrolled "
+       [:p "Because flowdom never re-runs your component, uncontrolled "
         "inputs aren't the second-class citizen they are in React. Let "
         "the browser own the input state and read it all at once on "
         "submit with " [:code "FormData"] " — no atom per field, and "
@@ -314,9 +332,9 @@
         "of flashes)."]
        [:p "Reach for a controlled input when the UI must react "
         [:em "while"] " the user types — live validation, previews, "
-        "filtering. Then " [:code ":value"] " comes from an s/atom and "
-        "every keystroke writes it back: exactly the pattern from the "
-        "Atoms in props page."]]
+        "filtering. Then " [:code ":value"] " is an rx over an atom and "
+        "every keystroke writes it back; propagation is synchronous, so "
+        "there's no caret jumping or echo lag to work around."]]
       :examples
       [{:title     "Uncontrolled — FormData on submit"
         :source    (rc/inline "frontend/examples/form_uncontrolled.cljs")
@@ -331,20 +349,35 @@
       [:<>
        [:p [:code "[:portal {:mount el}]"] " renders children into another "
         "DOM node — toasts, modals, tooltips — while they keep their place "
-        "in the reactive graph: cleanup and reactivity behave as if they "
-        "were still inside the component."]]
+        "in the process tree: reactivity crosses the portal, the nearest "
+        [:code ":fallback"] " and " [:code ":error-boundary"] " still "
+        "apply, and unmounting the portal's position cancels and removes "
+        "the ported content. " [:code ":mount"] " defaults to "
+        [:code "document.body"] "."]
+       [:p "On the JVM there is no foreign DOM to escape into, so "
+        "snapshots keep portal content in place under a "
+        [:code "[:portal …]"] " marker — tests can assert on it like any "
+        "other node."]]
       :examples
       [{:source    (rc/inline "frontend/examples/portal.cljs")
         :component portal/example}]}
 
      {:id    :suspense
-      :title "Suspense"
+      :title "Async & fallback"
       :prose
       [:<>
-       [:p [:code "createResource"] " turns an async fetch into a signal, and "
-        [:code "[:suspense {:fallback …}]"] " shows the fallback until "
-        "resources under it resolve. Re-fetches keep showing the stale value "
-        "instead of falling back — watch the flash when the new value lands."]]
+       [:p "Reading a flow that hasn't produced a value yet doesn't block "
+        "and doesn't need a loading flag: the rx is " [:em "pending"]
+        ", and the nearest enclosing element with a " [:code ":fallback"]
+        " prop renders the fallback in that position until the value "
+        "arrives. Pending is a state of the flow, not a cached flag — "
+        "reading a " [:em "new"] " flow (next user, reload) goes through "
+        "the fallback again."]
+       [:p [:strong "The one rule of async:"] " create flows outside rx "
+        "bodies, or memoize their construction as the example does. "
+        [:code "?"] " subscribes by flow identity, so a fresh flow object "
+        "built inside a re-running body would resubscribe forever and "
+        "never settle."]]
       :examples
       [{:source    (rc/inline "frontend/examples/suspense.cljs")
         :component suspense/example}]}
@@ -353,28 +386,18 @@
       :title "Error boundary"
       :prose
       [:<>
-       [:p [:code "[:error-boundary]"] " catches errors thrown while "
-        "rendering its children. The fallback fn receives the error and a "
-        [:code "reset"] " callback that re-renders the children — clear the "
-        "cause before calling it or you'll be right back."]]
+       [:p "A throwing rx doesn't take the app down: the error travels "
+        "upward as a value until an " [:code ":error-boundary"] " catches "
+        "it and renders its fallback — " [:code "(fn [err retry] …)"] ". "
+        "Recovery is two-fold: if the failing " [:em "dependency"]
+        " changes, the same subtree heals in place, state intact (the "
+        "example's Recover button); " [:code "retry"] " remounts the "
+        "subtree from scratch, for failures whose cause isn't a "
+        "dependency you can clear."]]
       :examples
       [{:source    (rc/inline "frontend/examples/error_boundary.cljs")
         :component error-boundary/example}]}
-
-     {:id    :js-components
-      :title "JS components"
-      :prose
-      [:<>
-       [:p [:code "[:> SomeJsComp {…} children]"] " invokes a JS Solid "
-        "component: the props map becomes a JS object, fn-valued props pass "
-        "as Solid accessors, and children go through as usual. Solid's own "
-        "components are already exposed as keywords (" [:code ":show"] ", "
-        [:code ":for"] ", …), so this is for npm libraries — the example "
-        "defines its 'library' component inline against the raw hyperscript "
-        "API."]]
-      :examples
-      [{:source    (rc/inline "frontend/examples/js_components.cljs")
-        :component js-components/example}]}]}
+]}
 
    {:title "React interop"
     :pages
@@ -383,11 +406,13 @@
       :prose
       [:<>
        [:p [:code "[react/component Comp props & children]"] " mounts a real "
-        "React root inside the Solid tree. Props: static values are captured "
-        "at mount; s/atoms are watched and re-render the root on every "
-        "change; functions pass through as-is (event handlers, render "
-        "props). The root unmounts when the surrounding Solid scope "
-        "disposes."]
+        "React root inside the flowdom tree — a host element owns the root, "
+        "and the region's lifetime is the root's lifetime: it unmounts when "
+        "the region unmounts. Props follow the same rule as everywhere else: "
+        "static values are captured at mount; atoms and rx values are read, "
+        "and every change re-renders the root (deduplicated with "
+        [:code "="] "); functions pass through as-is (event handlers, render "
+        "props)."]
        [:p "Children are React elements built with " [:code "react/el"]
         " — a thin " [:code "React.createElement"] " wrapper that takes a "
         "CLJS props map — so component libraries like recharts compose "
@@ -395,7 +420,7 @@
         "re-renders its whole root, exactly the behaviour the home page "
         "compares against."]]
       :examples
-      [{:title     "A React component with an s/atom prop"
+      [{:title     "A React component with an atom prop"
         :source    (rc/inline "frontend/examples/react_basic.cljs")
         :component react-basic/example}
        {:title     "recharts — React children via react/el"
@@ -410,12 +435,12 @@
         "the component renders through Reagent's own pipeline, so its "
         "internal " [:code "r/atom"] " state and re-rendering work exactly "
         "as in a Reagent app."]
-       [:p "Props crossing the bridge follow its own explicit contract "
-        "(React can't read accessors, so this is the one place refs are "
-        "consumed as refs): s/atoms are watched, plain atoms (including "
-        [:code "r/atom"] "s used " [:em "as props"] ") are not — keep "
-        "Reagent state inside the Reagent component and use s/atoms to "
-        "feed it from outside."]]
+       [:p "Props cross the bridge by the same rule as the rest of the "
+        "app — atoms and rx values are read, everything else is static — "
+        "so there is no special contract to remember. One boundary to "
+        "keep: an " [:code "r/atom"] " is Reagent-internal reactivity. "
+        "Use it inside the component, and feed the component from "
+        "outside with flowdom state — the atom prop below."]]
       :examples
       [{:source    (rc/inline "frontend/examples/reagent_counter.cljs")
         :component reagent-counter/example}]}]}
@@ -423,97 +448,82 @@
    {:title "Missionary"
     :pages
     [{:id    :missionary-hold
-      :title "Flows & hold"
+      :title "Flows in the UI"
       :prose
       [:<>
-       [:p "Every piece of state so far has been a value in an "
-        "atom. A UI also deals in things that are not: timers, "
-        "async requests, streams of server results. Missionary is "
-        "the effect system this stack uses for all of them: a "
-        [:strong "flow"] " is a value describing a stream — building "
-        "one runs nothing. " [:code "sm/hold"] " bridges it into the "
-        "UI as a read-only reactive ref that derefs exactly like an "
-        [:code "s/atom"] ", so everything from the previous pages (bare "
-        "derefs under " [:code "h"] ", thunks, accessor fns in "
-        "slots) applies unchanged. solidrpc's queries return "
-        "flows, so this bridge is also how server data reaches the "
-        "page."]
-       [:p [:code "hold"] " is lazy and refcounted, like a Reagent "
-        "reaction: the flow starts on the first reactive deref and is "
-        "cancelled when the last subscriber unmounts. Try it — visit "
-        "another page and come back, and the counter restarts from "
-        "zero even though the hold is a " [:code "defonce"] ". A hold "
-        "nobody renders costs nothing."]
-       [:p "One naming rule keeps the two libraries composable: "
-        [:code "solidclj.missionary"] " never reuses a "
-        [:code "missionary.core"] " name — " [:code "m/watch"]
-        " still means atom → flow, so flow → ref needed a different "
-        "word; " [:em "hold"] " is the FRP term."]]
+       [:p "Every piece of state so far has been a value in an atom. A UI "
+        "also deals in things that are not: timers, async requests, "
+        "streams of server results. Missionary is the effect system "
+        "underneath flowdom, and a " [:strong "flow"] " is a value "
+        "describing a stream — building one runs nothing. There is no "
+        "bridge to cross: " [:code "(? my-flow)"] " reads a flow the same "
+        "way it reads an atom."]
+       [:p "Lifecycle is subscription. The flow starts when the rx "
+        "reading it first mounts and is cancelled when it unmounts — try "
+        "it: visit another page and come back, and the counter restarts "
+        "from zero even though the flow is a " [:code "def"] ". A flow "
+        "nobody renders costs nothing, and a flow nobody watches anymore "
+        "is cancelled, not leaked."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_hold.cljs")
         :component missionary-hold/example}]}
 
      {:id    :missionary-resource
-      :title "Tasks & suspense"
+      :title "Tasks & reload"
       :prose
       [:<>
        [:p "A missionary " [:strong "task"] " is a recipe for one "
-        "asynchronous value. " [:code "sm/resource"] " runs it and "
-        "returns a reactive ref built on Solid's "
-        [:code "createResource"] " — so a deref while the task is in "
-        "flight suspends to the nearest " [:code "[:suspense]"]
-        " fallback, and " [:code "sm/reload!"] " cancels the current "
-        "run and re-executes the recipe."]
-       [:p "Prefer branching by hand? " [:code "(sm/pending? r)"]
-        " and " [:code "(sm/error r)"] " are reactive and never "
-        "suspend. A failed resource re-throws its error on deref, "
-        "which is what " [:code "[:error-boundary]"] " is for. Note "
-        "that resources are eager — the fetch starts when the "
-        "component body runs, so create them inside components, not "
-        "at the top level."]]
+        "asynchronous value; " [:code "m/ap"] " turns it into a "
+        "one-emission flow the UI can read. While it's in flight the rx "
+        "is pending and the " [:code ":fallback"] " renders — the same "
+        "mechanics as the Async page, because a request isn't a special "
+        "thing here, just another flow."]
+       [:p "Re-running a recipe is reading a " [:em "new"] " flow: the "
+        "example memoizes construction by run number, so \"reload\" is "
+        "bumping an atom. The old run is cancelled with the subtree that "
+        "read it — an in-flight request you navigated away from doesn't "
+        "linger."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_resource.cljs")
         :component missionary-resource/example}]}
 
      {:id    :missionary-spawn
-      :title "Effects & spawn!"
+      :title "Effects"
       :prose
       [:<>
-       [:p "Not every task produces a value for the DOM. "
-        [:code "sm/spawn!"] " runs a task purely for its effects and "
-        "ties it to the component's lifetime: mounting starts it, "
-        "unmounting cancels it. It deliberately takes a task, not a "
-        "flow — missionary already knows how to turn one into the "
-        "other (" [:code "m/reduce"] " below), and the bridge stays "
-        "one primitive."]
+       [:p "Not every flow produces a value for the DOM. "
+        [:code "(effect flow)"] " runs one purely for its side "
+        "effects: it is an rx that reads the flow and renders "
+        "nothing, so the tree position it occupies is its lifetime — "
+        "mounting subscribes (the flow starts), unmounting cancels "
+        "it. No new machinery: lifetime is subscription, like "
+        "everything else in flowdom; " [:code "effect"] " just names "
+        "the run-for-effect case."]
        [:p "Toggle the heart: while mounted, the loop beats twice a "
-        "second into an s/atom; unmount and the count freezes — the "
-        "task was cancelled, not orphaned. Remounting spawns a fresh "
-        "run. Calling " [:code "spawn!"] " outside a component throws "
-        "in dev builds: an effect nobody can cancel is a leak."]]
+        "second into an atom; unmount and the count freezes — the "
+        "flow was cancelled, not orphaned. Remounting is a fresh "
+        "run. And an effect built but never placed in the tree runs "
+        "nothing — a flow is a recipe, so there is nothing to leak."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_spawn.cljs")
         :component missionary-spawn/example}]}
 
      {:id    :missionary-tracked
-      :title "Solid → missionary"
+      :title "rx is a flow"
       :prose
       [:<>
-       [:p "The bridge runs both ways. For a single atom, missionary "
-        "already has the operator: s/atoms are watchable, so "
-        [:code "(m/watch my-atom)"] " gives a live flow of its values "
-        "with no adapter — the current value immediately at spawn, "
-        "then every change. For a whole " [:em "computation"] ", "
-        [:code "sm/tracked"] " runs a thunk in a Solid tracking scope "
-        "and emits every re-run — any s/atom deref'd inside re-fires "
-        "it, deduplicated with " [:code "="] "."]
-       [:p "From there the missionary toolbox applies: below, "
-        [:code "m/latest"] " derives Fahrenheit and "
-        [:code "m/reductions"] " accumulates a history — something a "
-        "ref can't remember on its own — and " [:code "hold"] " brings "
-        "each result back into hiccup. The whole chain is lazy end to "
-        "end: it spins up when this page renders and tears down when "
-        "you leave (which is why the history resets)."]]
+       [:p "The integration runs both ways because there is no adapter in "
+        "either direction. Atoms are already flows via " [:code "m/watch"]
+        ". And an " [:code "rx"] " " [:em "is"] " a missionary continuous "
+        "flow — deduplicated with " [:code "="] " — so the whole "
+        "missionary toolbox applies to it directly: below, "
+        [:code "m/reductions"] " accumulates a history of every "
+        "temperature seen, something a ref can't remember on its own, and "
+        "the UI reads the result back with " [:code "?"] "."]
+       [:p "The chain is lazy end to end: it spins up when this page "
+        "renders and tears down when you leave (which is why the history "
+        "resets). This composability is the reason flowdom is built on "
+        "missionary rather than next to it."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_tracked.cljs")
         :component missionary-tracked/example}]}]}
@@ -546,10 +556,10 @@
         "function over it, " [:code "dedupe"] " — it re-runs when "
         "the state changes and pushes only changed answers. From "
         "the client none of that is visible: a flow is a flow, so "
-        [:code "sm/hold"] " bridges it into hiccup and everything "
+        [:code "?"] " reads it and everything "
         "from the Missionary section applies unchanged, including "
-        "laziness — the connection opens when a page first derefs "
-        "the hold and closes when the last subscriber leaves."]
+        "laziness — the connection opens when a page first reads "
+        "the query and closes when the last subscriber leaves."]
        [:h2 "Commands"]
        [:p "A command is one round trip. "
         [:code "(rpc/command 'chat/send! text)"] " is a plain POST "
@@ -602,7 +612,7 @@
        [ui/code-block
         "(ns api.chat
   (:require [missionary.core :as m]
-            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+            #?(:cljs [solidrpc.client :as rpc])))
 
 ;; the server's state — an atom is all this page needs
 #?(:clj (defonce state (atom {:messages []})))
@@ -740,7 +750,7 @@
   (:require [missionary.core :as m]
             #?(:clj  [datomic.api :as d])
             #?(:clj  [server.notes :as notes])
-            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+            #?(:cljs [solidrpc.client :as rpc])))
 
 (defn reports
   \"The tx-report feed so far — shaped for the wire, no db values.\"
@@ -792,7 +802,7 @@
   (:require [missionary.core :as m]
             #?(:clj  [datomic.api :as d])
             #?(:clj  [server.notes :as store])
-            #?(:cljs [solidrpc.call.solidjs :as rpc])))
+            #?(:cljs [solidrpc.client :as rpc])))
 
 ;; the pure part: a function of a database value
 #?(:clj
@@ -813,7 +823,7 @@
         "to the last — so a transaction that can't change the "
         "result re-runs the query and emits " [:em "nothing"] " "
         "(the irrelevant-tx button in the demo; watch for the "
-        "absence of a flash). Hold the flow and the list is live."]
+        "absence of a flash). Read the flow and the list is live."]
        [:p "Notice what stayed pure. " [:code "all-notes"] " never "
         "learns about reports or flows. And because database values "
         "are immutable, 'the answer at t' needs no flow at all — "
@@ -882,9 +892,9 @@
         [:code "(call/query `all-notes< db)"] " resolves to the same "
         "var whose " [:code ":clj"] " branch produces the flow, so "
         "the two sides cannot drift apart. Facades return flows; "
-        "views hold them at point of use. Calling a read runs "
+        "views read them at point of use. Calling a read runs "
         "nothing — a flow is a recipe, and work starts when a "
-        "component renders the hold. The same component runs live in "
+        "component renders the read. The same component runs live in "
         "the browser and renders on the JVM without mocks (see the "
         "Testing section)."]
        [:p "The pattern adds one file to your app:"]
@@ -895,7 +905,7 @@
        [:p "The demo below runs the " [:strong "real"] " combinator — "
         [:code "solidrpc.live"] " is cljc, this is the same code the "
         "server runs. Both panels are pure components — "
-        [:code "[live-panel db]"] " holds the facade's flow, and "
+        [:code "[live-panel db]"] " reads the facade's flow, and "
         [:code "[pinned-panel db]"] " is the previous page's "
         "function-call-against-a-value, no flow at all; only the "
         "demo shell with its buttons performs effects. The pin "
@@ -1008,10 +1018,10 @@
       (fn [_wire-value] {:remote-addr (:remote-addr req)
                          :user-agent  (get-in req [:headers \"user-agent\"])})}}))"]
        [:p "In a view, a server value reads like anything else — "
-        "hold it at point of use:"]
+        "read it at point of use:"]
        [ui/code-block
-        "(let [info< (sm/hold (server-info< (server-info-token)) :initial nil)]
-  [:p \"up \" (fn [] (some-> @info< :uptime-ms)) \" ms\"])
+        "(let [info< (server-info< (server-info-token))]
+  [:p {:fallback \"…\"} \"up \" (rx (:uptime-ms (? info<))) \" ms\"])
 
 ;; the round trip:
 ;;   view      (server-info-token)          a marker token, plain data
@@ -1019,7 +1029,7 @@
 ;;   decode    the read handler for the tag runs; its return value
 ;;             becomes the argument server-info< receives
 ;;   endpoint  (server-info< {:started-at … :uptime-ms …})
-;;   wire in   plain data — the hold updates, the thunk re-runs"]
+;;   wire in   plain data — the query emits, the rx re-runs"]
        [:h2 "Write handlers"]
        [:p "That covers values coming in. Values also " [:em "leave"]
         ": " [:code ":write-handlers"] " is the outgoing contract, "
@@ -1088,39 +1098,107 @@
       :title "Rendering on the JVM"
       :prose
       [:<>
-       [:p "The hiccup walker is cljc, and underneath it "
-        [:code "solidclj.runtime"] " has two implementations: real "
-        "solid-js in the browser, and a simulator on the JVM — "
-        "signals, effects, owners, cleanup, and all the control-flow "
-        "components, with the same semantics (a parity suite runs "
-        "identical fixtures against both and fails on drift). So "
+       [:p "The interpreter is cljc. In the browser it patches DOM; on "
+        "the JVM the same components render into a sampled value — the "
+        "tree as plain hiccup, kept current by the same rx graph. So "
         "components render and " [:em "react"] " in plain Clojure: "
-        [:code "swap!"] " a satom and the tree updates fine-grained, "
+        [:code "swap!"] " an atom and the tree updates fine-grained, "
         "exactly like the browser."]
        [:h2 "Snapshots"]
-       [:p "The API is three functions. " [:code "render"]
-        " builds a live tree, " [:code "snapshot"] " serializes it "
-        "back to plain hiccup at a point in time — control flow "
-        "collapsed to what's rendered, handler fns preserved in "
-        "props as data — and " [:code "with-render"] " scopes "
-        "disposal. There is no test library beyond that: snapshots "
-        "are standard hiccup, so " [:code "get-in"] ", "
-        [:code "tree-seq"] ", hiccup-find and matcher-combinators "
-        "are the query language, and you fire an event by calling "
-        "the handler you pulled out of a snapshot."]
+       [:p "The API is three consumers of that value, one FRP word "
+        "each: " [:code "render"] " " [:em "holds"] " the tree flow "
+        "running, " [:code "snapshot"] " " [:em "samples"] " it — the "
+        "tree as hiccup at this instant, control flow collapsed to "
+        "what's rendered, handler fns preserved in props as data — and "
+        [:code "await"] " blocks for the first sample matching a "
+        "predicate. " [:code "with-render"] " scopes teardown. Snapshots are standard hiccup, so " [:code "get-in"]
+        ", " [:code "tree-seq"] " and matcher-combinators are the query "
+        "language, and you fire an event by calling the handler you "
+        "pulled out of a snapshot. Propagation is synchronous, so there "
+        "is nothing to wait for."]
        [ui/code-block
-        "(deftest counter-behaves
+        ";; the component under test — nothing test-specific about it,
+;; the same code mounts in the browser
+(defn counter [{:keys [start]}]
+  (let [n (atom start)]
+    [:div
+     [:span (rx (? n))]
+     [:button {:on-click (fn [_] (swap! n inc))} \"+\"]]))
+
+(deftest counter-behaves
   (with-render [t [counter {:start 5}]]
-    (is (match? [:div [:span 5] [:button {:onClick fn?} \"+\"]]
+    (is (match? [:div [:span 5] [:button {:on-click fn?} \"+\"]]
                 (snapshot t)))
-    ((get-in (snapshot t) [2 1 :onClick]) :click)   ;; handlers are data
+    ;; handlers are data: pull the fn out of the snapshot and call it
+    (let [on-click (get-in (snapshot t) [2 1 :on-click])]
+      (on-click :click))
     (is (= [:span 6] (nth (snapshot t) 1)))))"]
+       [:h2 "Waiting on flows"]
+       [:p "Trees fed by flows that emit from other threads — timers, "
+        "requests — are the one async case, and " [:code "await"]
+        " covers it: block until the tree satisfies a predicate, with a "
+        "timeout. Suspense and errors are asserted the same way as "
+        "anything else, because pending renders the fallback and an "
+        "uncaught error re-throws from " [:code "snapshot"] "."]
+       [ui/code-block
+        "(deftest await-async-tree
+  (let [tick< (m/ap (m/? (m/sleep 40 \"later\")))]
+    (with-render [t [:span {:fallback \"...\"} (rx (? tick<))]]
+      (is (= [:span \"...\"] (snapshot t)))
+      (is (= [:span \"later\"]
+             (fd/await t #(= [:span \"later\"] %) :timeout 1000))))))"]
+       [:h2 "The tree is a flow"]
+       [:p [:code "render"] " isn't special — it is one " [:em "consumer"]
+        " of the interpreted tree, which is itself a missionary flow of "
+        "hiccup. Consume it with raw missionary and you get every state "
+        "the UI passes through; attach a second consumer to a render's "
+        [:code ":tree"] " and nothing re-runs — rx blocks are shared, so "
+        "consumers fan out from one running computation. "
+        [:code "snapshot"] " and " [:code "await"] " are themselves "
+        "implemented as exactly these flow operations; the only "
+        "load-bearing thing " [:code "render"] " does is keep the "
+        "refcounted tree alive, so samples join the running instance "
+        "instead of mounting a fresh one."]
+       [ui/code-block
+        ";; every state of the UI, no render involved
+(let [node (fd/interpret [:div [:span (rx (? n))]])]
+  ((m/reduce (fn [_ tree] (record! tree) nil) nil node)
+   (fn [_]) (fn [_])))   ;; never throw from process callbacks
+
+;; a second consumer of a mounted tree — zero re-runs
+(with-render [t view]
+  (m/reduce log-state nil (:tree t))
+  ...)"]
+       [:p "The same property is a browser " [:em "dev mode"] ": "
+        [:code "(dom/mount hiccup el {:spine? true})"] " attaches both "
+        "consumers — the DOM is patched as usual " [:em "and"] " the "
+        "handle carries " [:code ":tree"] ", the live UI as a flow, "
+        "sampled by the " [:em "same"] " " [:code "snapshot"] " JVM "
+        "tests use — the beginnings of devtools. The hiccup is "
+        [:code "expand"] "ed "
+        "first, so both walks share one instance of every static "
+        "component; two renders of one expanded tree behave the same on "
+        "the JVM:"]
+       [ui/code-block
+        "(deftest dual-walk-shares-component-state
+  (let [expanded (fd/expand [counter {:start 5}])]
+    (with-render [a expanded]
+      (with-render [b expanded]
+        ;; a handler fired through consumer A…
+        (let [on-click (get-in (snapshot a) [2 1 :on-click])]
+          (on-click :click))
+        ;; …moves the tree consumer B sees: one instance, two views
+        (is (= [:span 6] (nth (snapshot b) 1)))))))"]
+       [:p "Caveat: components inside " [:em "dynamic"] " content (rx "
+        "emissions, for-by bodies) are instantiated per consumer, so "
+        "their local state isn't shared across views — ns-level state "
+        "always is."]
        [:h2 "Full-stack tests"]
-       [:p "Because the missionary bridge, " [:code "solidrpc.live"]
+       [:p "Because the interpreter, " [:code "solidrpc.live"]
         " and the api namespaces are all cljc, the whole stack from "
         "component to database runs in one JVM process: the real "
         [:code "notes-view"] " (the notes UI — an input, an Add "
-        "button and the live list, holding " [:code "all-notes<"]
+        "button and the live list, reading " [:code "all-notes<"]
         " like the demo panels), the real facade, the real live "
         "combinator, an in-memory Datomic. "
         "No HTTP server starts and nothing is mocked, so a failure "
@@ -1128,7 +1206,8 @@
         "of sync with the implementation. Driving the UI is the "
         "same snapshot mechanics as above; the one new piece is "
         "waiting, because the update comes back through the real "
-        "tx-report stream:"]
+        "tx-report stream — which is exactly what " [:code "await"]
+        " is for:"]
        [ui/code-block
         ";; snapshots are plain hiccup, so helpers are ordinary seq code
 (defn els [snap tag]
@@ -1138,18 +1217,11 @@
 (defn prop [snap tag k] (-> (els snap tag) first second k))
 (defn note-texts [snap] (map last (els snap :li)))
 
-(defn await-until [pred ms]
-  (let [deadline (+ (System/currentTimeMillis) ms)]
-    (loop []
-      (cond (pred)                                  true
-            (> (System/currentTimeMillis) deadline) false
-            :else (do (Thread/sleep 10) (recur))))))
-
 (deftest live-ui-roundtrip
-  (with-render [t [notes-view nil]]                ;; nil = no anchor
-    ((prop (snapshot t) :input :onInput) \"buy milk\")  ;; type
-    ((prop (snapshot t) :button :onClick) :click)       ;; click Add
-    (is (await-until #(some #{\"buy milk\"} (note-texts (snapshot t))) 3000)
+  (with-render [t [notes-view nil]]                 ;; nil = no anchor
+    ((prop (snapshot t) :input :on-input) \"buy milk\")  ;; type
+    ((prop (snapshot t) :button :on-click) :click)       ;; click Add
+    (is (await t #(some #{\"buy milk\"} (note-texts %)) :timeout 3000)
         \"the note came back through the tx-report stream\")))"]
        [:p "The anchor works here the way it does everywhere else: "
         "render " [:code "[notes-view db]"] " against a db value "

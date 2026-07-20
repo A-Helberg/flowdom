@@ -1,10 +1,9 @@
 (ns frontend.examples.reagent-counter
   (:require [reagent.core :as r]
-            [solidclj.api :as s]
-            [solidclj.react.reagent :as react.reagent]
+            [flowdom.react.reagent :as react.reagent]
             [solidclj.docs.ui :as ui]))
 
-(defonce step (s/atom 1))
+(defonce step (atom 1))
 
 ;; A form-2 Reagent component: its internal r/atom and Reagent's own
 ;; re-rendering work untouched inside the bridge.
@@ -18,12 +17,13 @@
                          :color "white" :border-radius "0.25rem"}}
         (str "+" step)]])))
 
-;; props crossing the bridge must be s/atoms to be watched
+;; props cross the bridge like anywhere else in flowdom: atoms and rx
+;; values are read, and re-render the root on change
 (defn example []
   [:div {:class "space-y-3"}
    [react.reagent/component counter {:step step}]
    [:div {:class "flex gap-2 items-center"}
-    [:span {:class "text-sm text-gray-500"} "step (s/atom prop):"]
+    [:span {:class "text-sm text-gray-500"} "step (atom prop):"]
     (for [k [1 5 10]]
       ^{:key k}
       [ui/button {:on-click #(reset! step k)} (str k)])]])

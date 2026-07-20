@@ -1,14 +1,13 @@
 (ns frontend.examples.atom-props
-  (:require-macros [solidclj.hiccup-macros :refer [h]])
-  (:require [solidclj.api :as s]
+  (:require [flowdom.rx :refer [rx ?]]
             [solidclj.docs.ui :as ui]))
 
-(defonce text (s/atom "solidclj"))
+(defonce text (atom "flowdom"))
 
-;; under h, a deref in a prop value becomes a live accessor:
-;; {:value @text} compiles to {:value (fn [] @text)}
+;; a prop value can be an rx — only that attribute is written when it
+;; changes. ui/input also accepts the atom itself and wraps it for you.
 (defn example []
-  (h [:div {:class "space-y-3"}
-      [ui/input {:value    @text
-                 :on-input #(reset! text (.. % -target -value))}]
-      [:p {:class "font-mono"} "reversed: " (apply str (reverse @text))]]))
+  [:div {:class "space-y-3"}
+   [ui/input {:value    text
+              :on-input #(reset! text (.. % -target -value))}]
+   [:p {:class "font-mono"} "reversed: " (rx (apply str (reverse (? text))))]])

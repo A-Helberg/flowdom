@@ -4,8 +4,7 @@
         com.cognitect/transit-clj  {:mvn/version "1.0.333"}
         com.cognitect/transit-cljs {:mvn/version "0.8.280"}
         juji/editscript {:mvn/version "0.7.0"}
-        missionary/missionary {:mvn/version "b.47"}
-        solidjclj/solidclj {:local/root "../solidclj/"}}
+        missionary/missionary {:mvn/version "b.47"}}
 
  :aliases
  {:cljs {:extra-deps {thheller/shadow-cljs {:mvn/version "2.28.17"}}}

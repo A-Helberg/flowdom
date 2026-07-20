@@ -1,18 +1,20 @@
 (ns frontend.examples.index-list
-  (:require [solidclj.api :as s]
+  (:require [flowdom.core :refer [for-by]]
+            [flowdom.rx :refer [rx ?]]
             [solidclj.docs.ui :as ui]))
 
-(defonce readings (s/atom [12 47 3]))
+(defonce readings (atom [12 47 3]))
 
+;; position-keyed is for-by keyed by index: each row's DOM node is
+;; reused and only its reading updates when a new value lands in that
+;; slot. Use it when positions are the identity; key by :id when items
+;; move around.
 (defn example []
   [:div {:class "space-y-3"}
-   ;; <Index> keys by POSITION: the row's DOM node is reused and only
-   ;; its text updates. Note the flipped signature vs :for — here the
-   ;; item is the getter and the index is a plain number.
    [:div {:class "font-mono text-sm"}
-    [:index {:each (fn [] @readings)}
-     (fn [reading i]
-       [:div "sensor " i ": " (fn [] (reading))])]]
+    (for-by :i (rx (vec (map-indexed (fn [i v] {:i i :v v}) (? readings))))
+            (fn [r]
+              [:div "sensor " (:i @r) ": " (rx (:v (? r)))]))]
 
    [ui/button {:on-click #(swap! readings (fn [rs] (mapv (fn [_] (rand-int 100)) rs)))}
     "New readings"]])

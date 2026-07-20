@@ -1,15 +1,14 @@
 (ns frontend.examples.react-chart
   (:require ["recharts" :refer [LineChart Line XAxis YAxis Tooltip]]
-            [solidclj.api :as s]
-            [solidclj.react :as react]
+            [flowdom.react :as react]
             [solidclj.docs.ui :as ui]))
 
 (defonce data
-  (s/atom [{:day "Mon" :uv 400} {:day "Tue" :uv 300}
-           {:day "Wed" :uv 200} {:day "Thu" :uv 278}]))
+  (atom [{:day "Mon" :uv 400} {:day "Tue" :uv 300}
+         {:day "Wed" :uv 200} {:day "Thu" :uv 278}]))
 
 ;; children built with react/el are React elements, passed through to
-;; React untouched; the :data s/atom re-renders the chart on change
+;; React untouched; the :data atom re-renders the chart on change
 (defn example []
   [:div {:class "space-y-3"}
    [react/component LineChart

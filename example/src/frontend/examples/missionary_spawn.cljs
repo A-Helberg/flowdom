@@ -1,26 +1,27 @@
 (ns frontend.examples.missionary-spawn
-  (:require-macros [solidclj.hiccup-macros :refer [h]])
   (:require [missionary.core :as m]
-            [solidclj.api :as s]
-            [solidclj.missionary :as sm]
+            [flowdom.rx :refer [rx ? effect]]
             [solidclj.docs.ui :as ui]))
 
-(defonce mounted? (s/atom true))
-(defonce beats (s/atom 0))
+(defonce mounted? (atom true))
+(defonce beats (atom 0))
 
-;; spawn! ties a task to the component's lifetime: mounting starts it,
-;; unmounting cancels it — watch the count freeze. Flows become tasks
-;; with plain missionary (m/reduce).
+;; the heartbeat is a flow run for effect: each emission is a beat
+;; written into state. A flow is a recipe — building it runs nothing.
+(def heartbeat
+  (m/ap (loop []
+          (m/amb (swap! beats inc)
+                 (do (m/? (m/sleep 500)) (recur))))))
+
+;; (effect heartbeat) renders nothing; the tree position it occupies
+;; is its lifetime — mount starts the loop, unmount cancels it
 (defn heart []
-  (sm/spawn!
-   (m/reduce (fn [_ _] (swap! beats inc)) nil
-             (m/ap (loop []
-                     (m/amb nil (do (m/? (m/sleep 500)) (recur)))))))
-  [:p "❤ beating…"])
+  [:p (effect heartbeat) "❤ beating…"])
 
 (defn example []
-  (h [:div {:class "space-y-3"}
-      [:show {:when (fn [] @mounted?) :fallback [:p {:class "text-gray-400"} "unmounted"]}
-       [heart]]
-      [:p {:class "font-mono"} "beats: " @beats]
-      [ui/button {:on-click #(swap! mounted? not)} "toggle mount"]]))
+  [:div {:class "space-y-3"}
+   (rx (if (? mounted?)
+         [heart]
+         [:p {:class "text-gray-400"} "unmounted"]))
+   [:p {:class "font-mono"} "beats: " (rx (? beats))]
+   [ui/button {:on-click #(swap! mounted? not)} "toggle mount"]])

@@ -1,19 +1,23 @@
 (ns frontend.examples.suspense
-  (:require ["solid-js" :refer [createResource createSignal]]
+  (:require [flowdom.rx :refer [rx ?]]
+            [missionary.core :as m]
             [solidclj.docs.ui :as ui]))
 
-(defn- fetch-email
-  "Stands in for a real request — resolves after 1.2s."
-  [id]
-  (js/Promise. (fn [resolve _]
-                 (js/setTimeout #(resolve (str "user-" id "@example.com")) 1200))))
+;; A "request" is a flow built from a task: sleep 1.2s, emit once.
+;; Memoized, because ? subscribes by flow identity — the same id must
+;; return the same flow object (the one rule of async).
+(def fetch-email
+  (memoize
+   (fn [id]
+     (m/ap (m/? (m/sleep 1200))
+           (str "user-" id "@example.com")))))
 
 (defn example []
-  (let [[user-id set-user-id] (createSignal 1)
-        [email]               (createResource user-id fetch-email)]
+  (let [user-id (atom 1)]
     [:div {:class "space-y-3"}
-     ;; the fallback shows while the resource loads the first time;
-     ;; later loads keep the stale value until the new one resolves
-     [:suspense {:fallback [:p {:class "text-gray-400"} "Loading…"]}
-      (fn [] [:p {:class "font-mono"} (email)])]
-     [ui/button {:on-click #(set-user-id (inc (user-id)))} "Load next user"]]))
+     ;; reading a flow with no value yet makes the rx PENDING; the
+     ;; nearest :fallback renders in its place. A new id is a new
+     ;; recipe — pending again, fallback again, then the value.
+     [:div {:fallback [:p {:class "text-gray-400"} "Loading…"]}
+      (rx [:p {:class "font-mono"} (? (fetch-email (? user-id)))])]
+     [ui/button {:on-click #(swap! user-id inc)} "Load next user"]]))

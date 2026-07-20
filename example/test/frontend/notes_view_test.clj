@@ -1,7 +1,7 @@
 (ns frontend.notes-view-test
   "The full-stack purity test: the REAL pure component + REAL facade +
-  REAL solidrpc.live + REAL in-memory Datomic, rendered in the JVM
-  runtime — zero HTTP, zero mocks. (The CLJS half of the facade is
+  REAL solidrpc.live + REAL in-memory Datomic, rendered by the JVM
+  interpreter — zero HTTP, zero mocks. (The CLJS half of the facade is
   covered by frontend.notes-facade-test under node, and by running the
   actual server.)
 
@@ -10,19 +10,11 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [api.notes :as notes]
+            [flowdom.core :as fd :refer [with-render snapshot]]
             [frontend.notes-view :as nv]
             [server.core :as core]
             [server.notes :as store]
-            [solidclj.api :as s]
-            [solidclj.hiccup :as hic]
             [solidrpc.transit :as transit]))
-
-(defn- await-until [pred ms]
-  (let [deadline (+ (System/currentTimeMillis) ms)]
-    (loop []
-      (cond (pred) true
-            (> (System/currentTimeMillis) deadline) false
-            :else (do (Thread/sleep 10) (recur))))))
 
 (defn- els [snap tag]
   (->> (tree-seq vector? seq snap)
@@ -41,26 +33,27 @@
 
 (deftest live-ui-roundtrip
   (let [note (str "roundtrip-" (gensym))]
-    (hic/with-render [t [nv/notes-view nil]]        ;; nil = now
-      (testing "initial render shows existing notes"
-        (is (some #{"hello from datomic"} (note-texts (s/snapshot t)))))
+    (with-render [t [nv/notes-view nil]]            ;; nil = now
+      (testing "initial render catches up to existing notes"
+        (is (fd/await t #(some #{"hello from datomic"} (note-texts %)))))
       (testing "driving the UI through snapshot handlers"
-        (let [snap (s/snapshot t)]
-          ((prop snap :input :onInput) note)     ;; type (event-value passthrough)
-          ((prop snap :button :onClick) :click)) ;; click Add → transact
-        (is (await-until #(some #{note} (note-texts (s/snapshot t))) 3000)
+        (let [snap (snapshot t)]
+          ((prop snap :input :on-input) note)     ;; type (event-value passthrough)
+          ((prop snap :button :on-click) :click)) ;; click Add → transact
+        (is (fd/await t #(some #{note} (note-texts %)) :timeout 3000)
             "note came back through the tx-report stream")
-        (is (= "" (prop (s/snapshot t) :input :value))
+        (is (= "" (prop (snapshot t) :input :value))
             "draft cleared after add")))))
 
 (deftest irrelevant-transactions-do-not-touch-the-view
-  (hic/with-render [t [nv/notes-view nil]]
-    (let [before (s/snapshot t)]
+  (with-render [t [nv/notes-view nil]]
+    (fd/await t #(some #{"hello from datomic"} (note-texts %)))
+    (let [before (snapshot t)]
       ;; touches no :note/* attribute — note-tx? filters it before the
       ;; query even re-runs; nothing should change
       @(d/transact store/conn [{:db/ident (keyword "noise" (str (gensym)))}])
       (Thread/sleep 200)
-      (is (= before (s/snapshot t))))))
+      (is (= before (snapshot t))))))
 
 (deftest as-of-views-are-plain-function-calls
   ;; no pinned flow, no render lifecycle: as-of views are immutable
@@ -87,8 +80,8 @@
         anchor (d/db store/conn)
         after-anchor (str "after-anchor-" (gensym))
         _      (notes/add-note! after-anchor)]
-    (hic/with-render [t [nv/notes-view anchor]]
-      (let [names (note-texts (s/snapshot t))]
+    (with-render [t [nv/notes-view anchor]]
+      (let [names (note-texts (fd/await t #(some #{after-anchor} (note-texts %))))]
         (is (some #{before-anchor} names))
         (is (some #{after-anchor} names) "caught up past the anchor")))))
 
@@ -127,15 +120,17 @@
       (is (pos? (:basis-t (transit/token-rep (:result body))))
           "a basis-t is all that crossed"))))
 
-(deftest dispose-freezes-the-tree-and-releases-the-flow
-  (let [note   (str "after-dispose-" (gensym))
-        handle (s/render [nv/notes-view nil])
-        before (s/snapshot handle)]
-    ((:dispose handle))
-    ;; the hold released its last subscriber → flow cancelled (the
-    ;; solidrpc.live tests assert the report unsubscription directly;
-    ;; here we observe the consumer side: the tree is frozen)
+(deftest cancel-releases-the-flow-and-a-fresh-sample-remounts
+  ;; `render` keeps the refcounted tree alive; :cancel releases its
+  ;; standing subscriber, which cascades: the rx cells stop, the live
+  ;; flow is cancelled, the report subscription is released. There is
+  ;; no frozen tree afterwards — flowdom trees are flows, so a later
+  ;; sample re-interprets from scratch (mount, sample, unmount) and
+  ;; sees everything written while nothing was subscribed.
+  (let [note   (str "after-cancel-" (gensym))
+        handle (fd/render [nv/notes-view nil])]
+    (fd/await handle #(some #{"hello from datomic"} (note-texts %)))
+    ((:cancel handle))
     (notes/add-note! note)
-    (Thread/sleep 300)
-    (is (= before (s/snapshot handle)) "no updates after dispose")
-    (is (not (some #{note} (note-texts (s/snapshot handle)))))))
+    (is (fd/await handle #(some #{note} (note-texts %)))
+        "a post-cancel sample is a fresh mount against current state")))

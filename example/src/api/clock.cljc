@@ -1,12 +1,12 @@
 (ns api.clock
   (:require
-   #?(:cljs [solidrpc.call.solidjs :as solidrpc])
+   #?(:cljs [solidrpc.client :as solidrpc])
    #?(:clj [manifold.stream :as s])))
 
 (defn time-flow
   "Emits the current server time every second as a string.
    Server: a Manifold periodic stream.
-   Client: an SSE-backed Reagent ratom via call/query."
+   Client: a shared SSE-backed flow via client/query."
   []
   #?(:clj  (s/periodically (long 1000)
                            (fn [] (str (java.util.Date.))))

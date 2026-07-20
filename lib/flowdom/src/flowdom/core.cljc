@@ -26,7 +26,8 @@
   remounts the boundary's subtree."
   (:refer-clojure :exclude [await])
   #?(:cljs (:require-macros [flowdom.core]))
-  (:require [flowdom.rx :as rx]
+  (:require [clojure.string :as string]
+            [flowdom.rx :as rx]
             [missionary.core :as m]))
 
 ;; ---------------------------------------------------------------------------
@@ -57,14 +58,52 @@
 
 (defn component-vec? [v] (and (vector? v) (fn? (first v))))
 
+(defn class-str
+  "Normalize a :class value — string, keyword, sequential, or a map of
+  class → truthiness — to a class string."
+  [v]
+  (cond
+    (nil? v)        nil
+    (string? v)     v
+    (keyword? v)    (name v)
+    (map? v)        (->> v
+                         (keep (fn [[k on?]]
+                                 (when on? (if (keyword? k) (name k) (str k)))))
+                         (string/join " "))
+    (sequential? v) (->> v (keep class-str) (string/join " "))
+    :else           (str v)))
+
+(defn parse-tag
+  "Keyword tag sugar: :p.cls-a.cls-b#some-id → [:p \"cls-a cls-b\" \"some-id\"].
+  Class and id are nil when absent."
+  [k]
+  (let [toks (re-seq #"[#.]?[^#.]+" (name k))
+        tag  (first toks)
+        cls  (keep #(when (string/starts-with? % ".") (subs % 1)) (rest toks))
+        id   (some #(when (string/starts-with? % "#") (subs % 1)) (rest toks))]
+    [(keyword tag)
+     (when (seq cls) (string/join " " cls))
+     id]))
+
 (defn normalize
-  "Element vector to [tag props children] with seqs (e.g. from `map`)
-  spliced into the child list."
+  "Element vector to [tag props children]: keyword sugar classes/id
+  merge into props, seqs (e.g. from `map`) splice into the child list."
   [v]
   (let [[t & r] v
         [p ch]  (if (props-map? (first r)) [(first r) (rest r)] [nil r])
-        ch      (into [] (mapcat #(if (seq? %) % [%])) ch)]
-    [t (or p {}) ch]))
+        ch      (into [] (mapcat #(if (seq? %) % [%])) ch)
+        [tag cls id] (parse-tag t)
+        p       (or p {})
+        p       (if (and id (not (contains? p :id))) (assoc p :id id) p)
+        p       (if cls
+                  (let [existing (:class p)]
+                    (assoc p :class
+                           (cond
+                             (nil? existing)     cls
+                             (rx/rx? existing)   (rx/rx* #(str cls " " (class-str (rx/? existing))))
+                             :else               (str cls " " (class-str existing)))))
+                  p)]
+    [tag p ch]))
 
 (defn splice?
   "For-by assemblies emit their children as a vector tagged for
@@ -110,12 +149,27 @@
             child)]
     v))
 
+(defn- push-child [acc c]
+  (if (splice? c) (reduce push-child acc c) (conj acc c)))
+
 (defn- assemble [tag props resolved-children]
-  (let [head (if (seq props) [tag props] [tag])]
-    (reduce (fn [acc c]
-              (if (splice? c) (into acc c) (conj acc c)))
-            head
-            resolved-children)))
+  (let [props (if (contains? props :class)
+                (update props :class class-str)
+                props)
+        head  (if (seq props) [tag props] [tag])]
+    (reduce push-child head resolved-children)))
+
+(defn- interpret-fragment
+  "[:<> & children] — children splice into the parent, no wrapper."
+  [v]
+  (let [[_ _ children] (normalize v)
+        kids (mapv interpret children)]
+    (if (not-any? rx/rx? kids)
+      (with-meta (reduce push-child [] kids) {::splice true})
+      (rx/rx*
+       (fn []
+         (with-meta (reduce push-child [] (mapv #(resolve-child nil %) kids))
+           {::splice true}))))))
 
 (defn- interpret-element [v]
   (let [[tag props children] (normalize v)
@@ -206,81 +260,131 @@
     (rx/rx? v)         (slot v)
     (for-by? v)        (interpret-for v)
     (component-vec? v) (interpret (apply (first v) (rest v)))
+    (and (element-vec? v) (= :<> (first v))) (interpret-fragment v)
+    ;; portals are a DOM concern; the spine renders content in place
+    ;; under a [:portal] marker (the :mount element is not data — drop it)
+    (and (element-vec? v) (= :portal (first v)))
+    (let [[_ props children] (normalize v)
+          props (dissoc props :mount)]
+      (interpret-element (into (if (seq props) [:portal props] [:portal]) children)))
     (and (element-vec? v) (= :error-boundary (first v))) (interpret-boundary v)
     (element-vec? v)   (interpret-element v)
     (fn? v)            (throw (ex-info "flowdom: bare functions are not valid tree content — components go in vectors [f args], dynamic values in (rx ...)"
                                        {:got v}))
     :else v))
 
+(defn expand
+  "Pre-run every statically-reachable component fn in `hiccup`, splicing
+  the results in. The point: two consumers (say, a DOM mount and a
+  spine) can then walk the SAME expanded tree — the components ran
+  once, HERE, so their rx blocks, local atoms, and handlers are one
+  shared instance with two views.
+
+  What stays per-consumer: content inside dynamic positions. Components
+  that appear in rx emissions or for-by bodies are instantiated by
+  whichever consumer interprets that emission, so slot-local component
+  state is not shared across consumers — ns-level state always is.
+  :error-boundary children are also left unexpanded: retry's contract
+  is a fresh remount, which pre-running the component would defeat."
+  [v]
+  (cond
+    (component-vec? v)
+    (expand (apply (first v) (rest v)))
+
+    (and (element-vec? v)
+         (not (contains? #{:error-boundary} (first v))))
+    (let [[t & r] v
+          [p ch]  (if (props-map? (first r)) [(first r) (rest r)] [nil r])]
+      (into (if p [t p] [t]) (map expand) ch))
+
+    (seq? v) (doall (map expand v))
+
+    :else v))
+
 ;; ---------------------------------------------------------------------------
-;; JVM renderer: the spine is the renderer; sample it, block on it
+;; consumers: hold the tree, sample it, block on it
+;;
+;; The interpreted tree IS a missionary flow; these are the three
+;; consumers tests want by name, each derived from it. `render` holds
+;; the tree running — the signal is refcounted, so with no standing
+;; subscriber a sample would mount and unmount the whole app per call —
+;; `snapshot` samples it, `await` blocks until a sample satisfies a
+;; predicate. All of them work on any handle with a running :tree.
 
-#?(:clj
-   (defn render
-     "Mount `hiccup`: interprets it and runs the spine. Returns a handle
-  for `snapshot`/`await`; call (:cancel handle) — or use `with-render` —
-  to tear every process down."
-     [hiccup]
-     (let [node  (interpret hiccup)
-           state (atom {:value (if (rx/rx? node) ::none node)
-                        :waiters []})
-           check-waiters!
-           (fn [v]
-             (let [ws (:waiters @state)]
-               (doseq [{:keys [pred prom]} ws]
-                 (when (try (pred v) (catch Throwable _ false))
-                   (deliver prom v)))
-               (swap! state update :waiters
-                      (fn [ws] (into [] (remove #(realized? (:prom %))) ws)))))
-           cancel
-           (if (rx/rx? node)
-             ((m/reduce (fn [_ v]
-                          (swap! state assoc :value v)
-                          (check-waiters! v)
-                          nil)
-                        nil (rx/unwrap node))
-              (fn [_] nil)
-              (fn [e] (swap! state assoc :value (rx/->Err e))))
-             (fn []))]
-       {:state state :cancel cancel})))
+(def ^:private nothing
+  #?(:clj (Object.) :cljs (js-obj)))
 
-#?(:clj
-   (defn snapshot
-     "The rendered tree as plain hiccup at this instant. Handler fns are
-  preserved in props (call them from tests, then snapshot again).
-  Returns the `flowdom.rx/pending` marker while the root is pending;
-  throws if an uncaught error reached the root."
-     [handle]
-     (let [v (:value @(:state handle))]
-       (cond
-         (identical? v ::none) nil
-         (rx/err? v)           (throw (:error v))
-         :else                 v))))
+(defn render
+  "Mount `hiccup`: interprets it and holds the tree flow running.
+  Returns a handle {:tree flow :cancel fn} for `snapshot`/`await`;
+  call (:cancel handle) — or use `with-render` — to tear every
+  process down."
+  [hiccup]
+  (let [node (interpret hiccup)]
+    {:tree   node
+     :cancel (if (rx/rx? node)
+               ((m/reduce (fn [_ _] nil) nil (rx/unwrap node))
+                (fn [_] nil) (fn [_] nil))
+               (fn []))}))
+
+(defn snapshot
+  "One sample of the tree flow: the rendered tree as plain hiccup at
+  this instant. Handler fns are preserved in props (call them from
+  tests, then snapshot again). Returns the `flowdom.rx/pending` marker
+  while the root is pending; throws if an uncaught error reached the
+  root. Cross-platform — works on a JVM `render` handle and on a
+  browser spine-mode `mount` handle alike."
+  [handle]
+  (let [node (:tree handle)]
+    (if-not (rx/rx? node)
+      node
+      (let [captured (volatile! nothing)
+            ;; a running signal hands a late subscriber its current
+            ;; value synchronously; (reduced v) ends the sampler there
+            cancel   ((m/reduce (fn [_ v] (vreset! captured v) (reduced v))
+                                nil (rx/unwrap node))
+                      (fn [_] nil) (fn [_] nil))
+            v        @captured]
+        (when (identical? v nothing)
+          (cancel)) ;; no synchronous transfer — don't leak the sampler
+        (cond
+          (identical? v nothing) nil
+          (rx/err? v)            (throw (:error v))
+          :else                  v)))))
 
 #?(:clj
    (defn await
-     "Block until the rendered tree satisfies `pred`, returning that
-  snapshot; throws on timeout (default 2000 ms). For trees fed by
-  flows emitting from other threads — synchronous tests don't need it."
+     "Block until a sample of the tree satisfies `pred`, returning it;
+  throws on timeout (default 2000 ms). A reduce-until-predicate over
+  the tree flow — for trees fed by flows emitting from other threads;
+  synchronous tests don't need it. Error values are skipped, pending
+  markers are offered to `pred` like any other sample."
      [handle pred & {:keys [timeout] :or {timeout 2000}}]
-     (let [prom    (promise)
-           current (:value @(:state handle))]
-       (if (and (not (identical? current ::none))
-                (not (rx/err? current))
-                (try (pred current) (catch Throwable _ false)))
-         current
-         (do (swap! (:state handle) update :waiters conj {:pred pred :prom prom})
-             ;; re-check: an emission may have landed between read and register
-             (let [v (:value @(:state handle))]
-               (when (and (not (identical? v ::none)) (not (rx/err? v))
-                          (try (pred v) (catch Throwable _ false)))
-                 (deliver prom v)))
-             (let [v (deref prom timeout ::timeout)]
-               (if (identical? v ::timeout)
+     (let [node (:tree handle)
+           ok?  (fn [v] (and (not (rx/err? v))
+                             (try (boolean (pred v)) (catch Throwable _ false))))]
+       (if-not (rx/rx? node)
+         (if (ok? node)
+           node
+           (throw (ex-info "flowdom: await on a static tree that will never match"
+                           {:tree node})))
+         (let [prom   (promise)
+               cancel ((m/reduce (fn [_ v] (if (ok? v) (reduced v) nothing))
+                                 nil (rx/unwrap node))
+                       (fn [acc] (deliver prom acc))
+                       (fn [_]   (deliver prom nothing)))
+               v      (deref prom timeout ::timeout)]
+           (cond
+             (= v ::timeout)
+             (do (cancel)
                  (throw (ex-info "flowdom: await timed out"
                                  {:timeout timeout
-                                  :last (:value @(:state handle))}))
-                 v)))))))
+                                  :last    (snapshot handle)})))
+
+             (identical? v nothing)
+             (throw (ex-info "flowdom: tree flow ended before matching" {}))
+
+             :else v))))))
 
 #?(:clj
    (defmacro with-render

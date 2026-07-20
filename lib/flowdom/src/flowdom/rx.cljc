@@ -220,3 +220,14 @@
       (rx (str \"$\" (? price)))"
      [& body]
      `(rx* (fn [] ~@body))))
+
+(defn effect
+  "Run `flow` for its side effects for as long as the position is
+  mounted: an rx that reads the flow and renders nothing. Place it
+  anywhere in the tree — mount subscribes (the flow starts), unmount
+  cancels it. Lifetime is subscription, like everything else; this
+  just names the run-for-effect case:
+
+      [:p (effect heartbeat) \"❤ beating…\"]"
+  [flow]
+  (rx* (fn [] (? flow) nil)))

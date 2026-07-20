@@ -74,7 +74,10 @@
      (defn- set-prop! [el k v]
        (cond
          (= k :class)
-         (set! (.-className el) (str (or v "")))
+         (set! (.-className el) (str (or (fd/class-str v) "")))
+
+         (= k :innerHTML)
+         (set! (.-innerHTML el) (str v))
 
          (= k :style)
          (if (map? v)
@@ -169,11 +172,12 @@
 
      (defn- mount-element [parent anchor ctx v]
        (let [[tag props children] (fd/normalize v)
-             fb    (:fallback props)
-             ctx   (if (some? fb) (assoc ctx :fallback fb) ctx)
-             props (dissoc props :fallback)
-             el    (.createElement (.-ownerDocument parent) (name tag))
-             ds    (array)]
+             fb       (:fallback props)
+             ctx      (if (some? fb) (assoc ctx :fallback fb) ctx)
+             on-mount (:on-mount props)
+             props    (dissoc props :fallback :on-mount)
+             el       (.createElement (.-ownerDocument parent) (name tag))
+             ds       (array)]
          (doseq [[k pv] props]
            (cond
              (handler-key? k) (.addEventListener el (event-name k) pv)
@@ -181,6 +185,11 @@
              :else            (set-prop! el k pv)))
          (.push ds (mount-children el nil ctx children))
          (.insertBefore parent el anchor)
+         ;; :on-mount runs once with the now-connected element; a fn it
+         ;; returns is its teardown, cancelled with the element's processes.
+         (when on-mount
+           (let [teardown (on-mount el)]
+             (when (fn? teardown) (.push ds teardown))))
          (fn [] (dispose-all! ds))))
 
 ;; ---------------------------------------------------------------------------
@@ -247,6 +256,31 @@
                (doseq [[_ e] @cache] ((:dispose e))))))))
 
 ;; ---------------------------------------------------------------------------
+;; portal
+
+     (defn- mount-portal
+       "[:portal {:mount el} & children] — children render into `el`
+  (default: the document body) while keeping their place in the
+  process tree: same ctx (fallback/error routing), and disposing the
+  portal's position cancels and removes the ported content."
+       [parent anchor ctx v]
+       (let [[_ props children] (fd/normalize v)
+             target (or (:mount props)
+                        (.-body (.-ownerDocument parent)))
+             ;; a marker holds the portal's place in its own parent so
+             ;; enclosing region operations behave normally
+             marker (.createComment (.-ownerDocument parent) "portal")
+             start  (.createComment (.-ownerDocument target) "portal-content")
+             end    (.createComment (.-ownerDocument target) "/portal-content")]
+         (.appendChild target start)
+         (.appendChild target end)
+         (let [d (mount-children target end ctx children)]
+           (.insertBefore parent marker anchor)
+           (fn []
+             (d)
+             (remove-range! start end)))))
+
+;; ---------------------------------------------------------------------------
 ;; error boundary
 
      (defn- mount-boundary [parent anchor ctx v]
@@ -294,6 +328,10 @@
          (fd/for-by? v)             (mount-for parent anchor ctx v)
          (fd/component-vec? v)      (mount-child parent anchor ctx
                                                  (apply (first v) (rest v)))
+         (and (fd/element-vec? v) (= :<> (first v)))
+         (mount-children parent anchor ctx (nth (fd/normalize v) 2))
+         (and (fd/element-vec? v) (= :portal (first v)))
+         (mount-portal parent anchor ctx v)
          (and (fd/element-vec? v) (= :error-boundary (first v)))
          (mount-boundary parent anchor ctx v)
          (fd/element-vec? v)        (mount-element parent anchor ctx v)
@@ -305,9 +343,35 @@
 
      (defn mount
        "Mount `hiccup` into DOM element `container`. Returns a dispose fn
-  that cancels every process and clears the container."
-       [hiccup container]
-       (let [d (mount-child container nil {} hiccup)]
-         (fn []
-           (d)
-           (set! (.-innerHTML container) "")))))) ;; end :cljs
+  that cancels every process and clears the container.
+
+  Dev mode — `(mount hiccup container {:spine? true})` — attaches BOTH
+  consumers: the DOM is patched as usual, and a spine keeps the live
+  tree as a value. Returns a handle instead of a fn:
+
+      {:dispose fn    — cancel everything, clear the container
+       :tree    flow  — the whole UI as a missionary flow of hiccup}
+
+  Sample it with flowdom.core/snapshot — the same fn JVM tests use.
+
+  The hiccup is `expand`ed first so both walks share one instance of
+  every statically-reachable component (rx blocks are m/signal-shared,
+  so the computations run once and fan out). Caveat: component state
+  inside dynamic content — rx emissions, for-by bodies — is
+  instantiated per consumer and won't be reflected in the spine;
+  ns-level state always is."
+       ([hiccup container]
+        (let [d (mount-child container nil {} hiccup)]
+          (fn []
+            (d)
+            (set! (.-innerHTML container) ""))))
+       ([hiccup container {:keys [spine?]}]
+        (if-not spine?
+          (mount hiccup container)
+          (let [expanded    (fd/expand hiccup)
+                dom-dispose (mount expanded container)
+                spine       (fd/render expanded)]
+            {:dispose (fn []
+                        ((:cancel spine))
+                        (dom-dispose))
+             :tree    (:tree spine)})))))) ;; end :cljs

@@ -4,7 +4,6 @@
   test build of its own yet."
   (:require [cljs.test :refer-macros [deftest is]]
             [missionary.core :as m]
-            [solidclj.api :as s]
             [solidrpc.stream :as stream]))
 
 (defn- forever
@@ -37,7 +36,7 @@
     (is (= [[1 "a"]] @seen))))
 
 (deftest watchable-arg-switches-the-flow
-  (let [room   (s/atom "general")
+  (let [room   (atom "general")
         starts (atom [])
         {:keys [seen cancel!]} (consume!
                                 (stream/follow-args ["x" room]
@@ -50,7 +49,7 @@
     (cancel!)))
 
 (deftest equal-values-do-not-restart
-  (let [room   (s/atom "general")
+  (let [room   (atom "general")
         starts (atom [])
         {:keys [cancel!]} (consume!
                            (stream/follow-args [room]
@@ -61,7 +60,7 @@
     (cancel!)))
 
 (deftest cancelling-the-consumer-stops-the-inner-flow
-  (let [room    (s/atom "a")
+  (let [room    (atom "a")
         stopped (atom 0)
         {:keys [cancel!]} (consume!
                            (stream/follow-args [room]

@@ -1,20 +1,19 @@
 (ns frontend.examples.switch
-  (:require [solidclj.api :as s]
+  (:require [flowdom.rx :refer [rx ?]]
             [solidclj.docs.ui :as ui]))
 
-(defonce status (s/atom :loading))
+(defonce status (atom :loading))
 
+;; more than two branches is just… case. Or cond. Control flow is
+;; ordinary Clojure returning data — nothing to learn.
 (defn example []
   [:div {:class "space-y-3"}
-   [:switch {:fallback [:p {:class "text-gray-400"} "Unknown status."]}
-    [:match {:when (fn [] (= :loading @status))}
-     [:p {:class "text-blue-600"} "Loading…"]]
-    [:match {:when (fn [] (= :ready @status))}
-     [:p {:class "text-green-600"} "Ready!"]]
-    [:match {:when (fn [] (= :error @status))}
-     [:p {:class "text-red-600"} "Something failed."]]]
+   (rx (case (? status)
+         :loading [:p {:class "text-blue-600"} "Loading…"]
+         :ready   [:p {:class "text-green-600"} "Ready!"]
+         :error   [:p {:class "text-red-600"} "Something failed."]
+         [:p {:class "text-gray-400"} "Unknown status."]))
 
    [:div {:class "flex gap-2"}
     (for [st [:loading :ready :error]]
-      ^{:key st}
       [ui/button {:on-click #(reset! status st)} (name st)])]])

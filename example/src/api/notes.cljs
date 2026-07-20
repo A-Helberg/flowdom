@@ -17,7 +17,8 @@
 
 (defn all-notes<
   "Flow of every note, anchored at `db` (nil = no floor; the feed's
-  head supplies the present). Hold it at point of use."
+  head supplies the present). Read it at point of use:
+  (rx (? (all-notes< db)))."
   ([] (all-notes< nil))
   ([db] (live/live store/tx-reports< db all-notes
                    :relevant? note-tx?)))

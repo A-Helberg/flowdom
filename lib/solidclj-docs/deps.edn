@@ -1,6 +1,7 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure       {:mvn/version "1.12.3"}
-        org.clojure/clojurescript {:mvn/version "1.11.132"}}
+        org.clojure/clojurescript {:mvn/version "1.11.132"}
+        flowdom/flowdom           {:local/root "../flowdom"}}
 
  :aliases
  ;; regenerate the Tailwind class manifest (resources/solidclj/docs/classes.txt)
