@@ -77,7 +77,30 @@ flowdom is built on [missionary](https://github.com/leonoel/missionary)
 flowdom pins that exact version across every lib; upgrade missionary
 deliberately, in lockstep, not via a floating range.
 
-## Getting started
+## Using it in your project
+
+No versioned release yet — depend on the libs as git deps, pinned to a
+release tag or sha. Each is a subdirectory of this repo, so point
+`:deps/root` at it:
+
+```clojure
+{:deps {io.github.a-helberg/flowdom
+        {:git/url   "https://github.com/A-Helberg/flowdom"
+         :git/sha   "…"            ; a commit on main
+         :deps/root "lib/flowdom"}
+        ;; optional, for the SSE query/command transport:
+        io.github.a-helberg/flowrpc
+        {:git/url   "https://github.com/A-Helberg/flowdom"
+         :git/sha   "…"
+         :deps/root "lib/flowrpc"}}}
+```
+
+Compile with [shadow-cljs](https://github.com/thheller/shadow-cljs)
+(`:deps true`). flowdom itself has no JS dependencies. The optional
+bridges pull peers you install yourself: `flowdom.react` needs
+`react` + `react-dom`, and `flowdom.react.reagent` needs `reagent`.
+
+## Working on flowdom itself
 
     task bootstrap                        # toolchain (mise) + JS deps
 

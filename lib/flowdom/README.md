@@ -40,8 +40,11 @@ guide.
 | `flowdom.rx` | the kernel: `rx` / `rx*`, the universal read `?`, `effect` (run a flow for its side effects, lifetime = subscription) |
 | `flowdom.core` | the interpreter — hiccup+rx → a value tree — and its JVM consumers: `render`, `snapshot`, `await`, `with-render`, `for-by`, `expand` |
 | `flowdom.dom` | the browser consumer: `mount` (CLJS only) |
-| `flowdom.react` | render React components in the tree (`component`, `el`) |
-| `flowdom.react.reagent` | the same for Reagent (separate ns, so `flowdom.react` needs no reagent) |
+| `flowdom.react` | render React components in the tree (`component`, `el`) — needs `react` + `react-dom` as peer deps |
+| `flowdom.react.reagent` | the same for Reagent (separate ns, so `flowdom.react` needs no reagent) — needs `reagent` |
+
+The core (`flowdom.rx` / `.core` / `.dom`) has no JS dependencies; only
+the optional bridges above pull peers, and only if you require them.
 
 ## Grammar
 
