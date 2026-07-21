@@ -58,9 +58,9 @@
          "that changes gets a brief blue flash (that's global on this "
          "site — toggle it in the sidebar). A tick touches exactly one "
          "dot: no component re-runs, no diff, no other node is visited. "
-         "The React tab shows where the comparison grid returns once the "
-         "React bridge is ported — its source is below for contrast: "
-         "state at the top, so every tick re-stamps all 2500 dots."]]
+         "Flip to the React tab for the contrast — the same 2500 dots "
+         "with state at the top, so every tick re-stamps the whole grid "
+         "(its source is below)."]]
        [perf/demo]
        [:details {:class "mt-6 border border-gray-200 rounded-lg overflow-hidden"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
@@ -68,7 +68,7 @@
         [ui/code-block (rc/inline "frontend/examples/perf_flowdom.cljs")]]
        [:details {:class "mt-3 border border-gray-200 rounded-lg overflow-hidden"}
         [:summary {:class "px-4 py-2 text-sm font-medium text-gray-600 cursor-pointer bg-gray-50"}
-         "React grid source (not yet ported — for contrast)"]
+         "React grid source (for contrast)"]
         [ui/code-block (rc/inline "frontend/examples/perf_react.cljs")]]]}]}
 
    {:title "Basics"
@@ -99,7 +99,16 @@
        [:p "Keep Tailwind variants like " [:code "hover:underline"] " and "
         "classes containing dots (" [:code "py-1.5"] ") in the "
         [:code ":class"] " string — the keyword shorthand splits on "
-        [:code "."] " and can't represent them."]]
+        [:code "."] " and can't represent them."]
+       [:p "Most props are HTML attributes, but the ones the DOM owns as "
+        "live properties — " [:code ":value"] ", " [:code ":checked"] ", "
+        [:code ":indeterminate"] ", " [:code ":selected"] " — are set as "
+        "properties so they keep reflecting after the user interacts. "
+        "Custom elements receive object-valued props as properties too, "
+        "unstringified. Handlers are " [:code ":on*"] " keys; a bare fn is "
+        "the listener, or pass " [:code "{:handler f :once true}"]
+        " (also " [:code ":capture"] ", " [:code ":passive"]
+        ") for addEventListener options."]]
       :examples
       [{:source    (rc/inline "frontend/examples/elements.cljs")
         :component elements/example}]}]}
@@ -327,7 +336,12 @@
         [:em "while"] " the user types — live validation, previews, "
         "filtering. Then " [:code ":value"] " is an rx over an atom and "
         "every keystroke writes it back; propagation is synchronous, so "
-        "there's no caret jumping or echo lag to work around."]]
+        "there's no caret jumping or echo lag to work around."]
+       [:p "A controlled " [:code ":value"] " is IME-aware: while an "
+        "input method is composing — pinyin, kana, dead keys — flowdom "
+        "holds off writing the value back, then applies the latest when "
+        "composition ends, so the candidate window is never cut off "
+        "mid-word."]]
       :examples
       [{:title     "Uncontrolled — FormData on submit"
         :source    (rc/inline "frontend/examples/form_uncontrolled.cljs")
@@ -386,7 +400,15 @@
         " changes, the same subtree heals in place, state intact (the "
         "example's Recover button); " [:code "retry"] " remounts the "
         "subtree from scratch, for failures whose cause isn't a "
-        "dependency you can clear."]]
+        "dependency you can clear."]
+       [:p "An error that reaches the top with no boundary above it is "
+        "the root's to handle: pass " [:code "dom/mount"] " an "
+        [:code ":on-error (fn [e remount!])"] " and every such error "
+        "lands there instead of the console, with " [:code "remount!"]
+        " — the root-level " [:code "retry"] " — to tear the whole app "
+        "down and rebuild it. Without the hook, an uncaught error logs "
+        "and that region goes dark; with it, you decide (a full "
+        "remount, an error screen, a report)."]]
       :examples
       [{:source    (rc/inline "frontend/examples/error_boundary.cljs")
         :component error-boundary/example}]}]}

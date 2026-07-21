@@ -44,7 +44,9 @@ Three rules:
 Control flow is data (an rx emitting different hiccup swaps the
 subtree), keyed lists are `for-by`, pending async renders the nearest
 `:fallback`, and errors travel as values to the nearest
-`:error-boundary`.
+`:error-boundary`. React and Reagent components mount inside the tree
+(`flowdom.react`), and `lib/flowrpc/` streams live server reads over
+SSE — both taught in the guide.
 
 ## Testing without a browser
 
@@ -63,14 +65,17 @@ emit from other threads. See `lib/flowdom/test/`.
 ## Layout
 
     lib/flowdom/          the library (rx kernel, interpreter, DOM consumer)
-    lib/flowdom-docs/    the guide's chrome (sidebar shell, code blocks)
-    lib/flowrpc/         SSE query/command transport (client port to flowdom pending)
+    lib/flowdom-docs/     the guide's chrome (sidebar shell, code blocks)
+    lib/flowrpc/          SSE query/command transport (live reads, tokens)
     example/              the interactive guide, itself written in flowdom
     docs/                 design document
 
-The guide's React-interop, portal/refs, flowrpc and Datomic pages are
-not yet ported to flowdom; their sources remain in
-`example/src/frontend/examples/` and return as the port continues.
+## Compatibility
+
+flowdom is built on [missionary](https://github.com/leonoel/missionary)
+`b.47`, which is itself a beta: its API can shift between releases.
+flowdom pins that exact version across every lib; upgrade missionary
+deliberately, in lockstep, not via a floating range.
 
 ## Getting started
 

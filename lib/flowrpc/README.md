@@ -1,6 +1,6 @@
-# rpc
+# flowrpc
 
-Seamless backend–frontend reactivity over SSE. A thin transport layer that connects a Manifold stream on the server to a SolidJS signal on the client, with transit encoding, automatic reconnect, and no shared state.
+Seamless backend–frontend reactivity over SSE. A thin transport layer that connects a missionary flow on the server to a flowdom `rx` on the client, with transit encoding, automatic reconnect, and no shared state. A server query is a plain flow the client reads directly — `(rx (? (chat/messages)))`.
 
 ---
 
@@ -118,7 +118,7 @@ The api namespace colocates the pure fn with its `<`-suffixed facade, registered
   (:require #?@(:clj  [[datomic.api :as d]
                        [server.notes :as store]
                        [flowrpc.live :as live]]
-                :cljs [[flowrpc.call.solidjs :as call]])))
+                :cljs [[flowrpc.client :as call]])))
 
 #?(:clj
    (defn all-notes [db] ...))          ;; pure — call it with any as-of view
@@ -129,11 +129,12 @@ The api namespace colocates the pure fn with its `<`-suffixed facade, registered
 ```
 
 ```clojure
-;; in a view — hold at point of use
-(let [notes< (sm/hold (notes/all-notes< db) :initial [])] ...)
+;; in a view — read at point of use
+[:ul (for-by :id (rx (? (notes/all-notes< db)))
+        (fn [note] [:li (rx (:text (? note)))]))]
 ```
 
-Calling a read runs nothing — flows are recipes. No connection opens until a component renders the hold; unmounting closes it. Flow-returning endpoints are adapted to SSE automatically by `flowrpc.server/handle-query`.
+Calling a read runs nothing — a query is a cold flow, a recipe. No connection opens until an `rx` reads it; the last reader leaving closes it. Read one query through one `rx` to share a single connection across several readers. Flow-returning endpoints are adapted to SSE automatically by `flowrpc.server/handle-query`.
 
 ### Properties
 
@@ -142,6 +143,32 @@ Components become pure functions of a db anchor, and the same component:
 - runs **live in the browser** over SSE;
 - renders **on the JVM without HTTP or mocks** — real facade, real flow, real database (see the example's `frontend.notes-view-test`: drive the UI through snapshot handlers, watch the answer come back through the tx-report stream);
 - and fixed points in time are just function calls — "the answer at t" as a value you keep, for fixtures and SSR.
+
+---
+
+## Security
+
+The transport carries authority; two guards live in the handlers, the
+rest is your app's to mount.
+
+- **CSRF.** If your endpoints trust a session cookie, set it
+  `SameSite=Lax` (or `Strict`) — the only control that also covers the
+  SSE stream, since `EventSource` can send no CSRF header or custom
+  content-type. On top of that, `handle-command` requires
+  `content-type: application/transit+json` and 415s anything else: a
+  forged cross-site POST can only send a CORS-"simple" content-type
+  without a preflight your server refuses. For `SameSite=None`
+  deployments, add an Origin allowlist / double-submit token in front.
+- **Payload limits.** `handle-query` / `handle-command` reject
+  over-large or over-deep transit with 413 *before parsing* (defaults
+  1 MiB / depth 64, per-handler `:max-bytes` / `:max-depth`). The depth
+  check is lexical — the JSON parser recurses per level, so a
+  post-decode check would already have overflowed the stack.
+- **Registry whitelist.** Only vars registered with
+  `flowrpc.registry/register!` are reachable; args, however, are
+  arbitrary transit — validate their shape in your endpoint fn if it
+  matters. Authorization is always the endpoint fn's job (authorize
+  against the *present*, read domain data at `t`).
 
 ---
 
