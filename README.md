@@ -63,12 +63,25 @@ emit from other threads. See `lib/flowdom/test/`.
 ## Layout
 
     lib/flowdom/          the library (rx kernel, interpreter, DOM consumer)
+    lib/flowdom-docs/    the guide's chrome (sidebar shell, code blocks)
+    lib/flowrpc/         SSE query/command transport (client port to flowdom pending)
     example/              the interactive guide, itself written in flowdom
     docs/                 design document
 
+The guide's React-interop, portal/refs, flowrpc and Datomic pages are
+not yet ported to flowdom; their sources remain in
+`example/src/frontend/examples/` and return as the port continues.
+
 ## Getting started
 
-    task bootstrap        # toolchain (mise) + JS deps
-    task example          # guide at http://localhost:1380
-    task test             # JVM test suite
-    task test-dom         # DOM consumer tests (happy-dom, node)
+    task bootstrap                        # toolchain (mise) + JS deps
+
+    cd example
+    npx shadow-cljs watch app             # guide at http://localhost:1380
+
+    cd lib/flowdom
+    clojure -M:test                       # JVM test suite
+
+    cd example
+    npx shadow-cljs compile node-test
+    node out/node-tests.js                # browser-consumer + guide e2e (happy-dom)

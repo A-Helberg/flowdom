@@ -1,6 +1,6 @@
 (ns frontend.examples.helpers
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce temp (atom 21))
 

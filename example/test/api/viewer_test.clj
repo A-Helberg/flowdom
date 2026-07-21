@@ -8,7 +8,7 @@
             [missionary.core :as m]
             [api.viewer :as viewer]
             [server.core :as core]
-            [solidrpc.transit :as transit]))
+            [flowrpc.transit :as transit]))
 
 (defn- first-data [resp]
   (let [frame @(s/take! (:body resp))]

@@ -1,6 +1,6 @@
 (ns frontend.examples.show
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce online? (atom true))
 

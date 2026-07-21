@@ -1,6 +1,6 @@
 (ns frontend.examples.error-boundary
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; A throwing rx travels upward as a value until an :error-boundary
 ;; catches it. Recovery here is a HEAL: clearing the atom re-runs the

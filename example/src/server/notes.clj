@@ -4,7 +4,7 @@
   api.notes, colocated with its client side.
 
   This ns also registers the db-as-value transit handlers: a db value
-  crossing the wire serializes as #solid/db {:basis-t t}, and an
+  crossing the wire serializes as #flowdom/db {:basis-t t}, and an
   incoming token deserializes back into an actual db value (as-of), so
   endpoint fns receive databases, never tokens. That registration is
   the middleware: resolution happens at the serialization boundary
@@ -18,7 +18,7 @@
    [datomic.api :as d]
    [missionary.core :as m]
    [server.tx-listener :as txl]
-   [solidrpc.transit :as transit]))
+   [flowrpc.transit :as transit]))
 
 ;; ---------------------------------------------------------------------------
 ;; A throwaway in-memory database

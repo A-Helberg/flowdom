@@ -1,7 +1,7 @@
 (ns frontend.examples.missionary-tracked
   (:require [flowdom.rx :refer [rx ?]]
             [missionary.core :as m]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce celsius (atom 21))
 

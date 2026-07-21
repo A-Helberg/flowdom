@@ -2,7 +2,7 @@
   "The CLJS half of the api.notes facade. Construction is pure — the
   facade returns a FLOW (a recipe) and building it runs nothing; no
   EventSource, no network. In cljs builds api.notes resolves to its
-  browser twin (api/notes.cljs) — the real solidrpc.live combinator
+  browser twin (api/notes.cljs) — the real flowrpc.live combinator
   over the fake datomic — so this ns can also MOUNT the real
   notes-view against it and watch a write come back through the fake
   tx-report stream; the real :cljs branch (client/query) is one line,

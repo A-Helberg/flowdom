@@ -1,7 +1,7 @@
 (ns frontend.examples.missionary-spawn
   (:require [missionary.core :as m]
             [flowdom.rx :refer [rx ? effect]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce mounted? (atom true))
 (defonce beats (atom 0))

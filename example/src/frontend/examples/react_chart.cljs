@@ -1,7 +1,7 @@
 (ns frontend.examples.react-chart
   (:require ["recharts" :refer [LineChart Line XAxis YAxis Tooltip]]
             [flowdom.react :as react]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce data
   (atom [{:day "Mon" :uv 400} {:day "Tue" :uv 300}

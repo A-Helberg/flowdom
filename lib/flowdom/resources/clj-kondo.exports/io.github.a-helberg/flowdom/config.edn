@@ -1,0 +1,4 @@
+{;; rx is a plain body macro — lint its body as top-level forms
+ :lint-as {flowdom.rx/rx            clojure.core/do
+           ;; with-render binds one symbol to a handle, like with-open
+           flowdom.core/with-render clojure.core/with-open}}

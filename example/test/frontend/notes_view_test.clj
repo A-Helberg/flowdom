@@ -1,6 +1,6 @@
 (ns frontend.notes-view-test
   "The full-stack purity test: the REAL pure component + REAL facade +
-  REAL solidrpc.live + REAL in-memory Datomic, rendered by the JVM
+  REAL flowrpc.live + REAL in-memory Datomic, rendered by the JVM
   interpreter — zero HTTP, zero mocks. (The CLJS half of the facade is
   covered by frontend.notes-facade-test under node, and by running the
   actual server.)
@@ -14,7 +14,7 @@
             [frontend.notes-view :as nv]
             [server.core :as core]
             [server.notes :as store]
-            [solidrpc.transit :as transit]))
+            [flowrpc.transit :as transit]))
 
 (defn- els [snap tag]
   (->> (tree-seq vector? seq snap)
@@ -86,12 +86,12 @@
         (is (some #{after-anchor} names) "caught up past the anchor")))))
 
 (deftest db-value-round-trips-the-wire-as-a-token
-  ;; the transit boundary: value → #solid/db {:basis-t t} → value,
+  ;; the transit boundary: value → #flowdom/db {:basis-t t} → value,
   ;; using the same handler maps server.core supplies at the mount
   ;; point — with a real Datomic db value.
   (let [db0  (d/db store/conn)
         wire (transit/write db0 {:handlers (:write-handlers store/transit-handlers)})]
-    (is (re-find #"solid/db" wire))
+    (is (re-find #"flowdom/db" wire))
     (is (not (re-find #"hello from datomic" wire)) "no domain data crosses")
     (testing "without a resolver, the client's view: a generic token"
       (is (= (transit/token transit/db-tag {:basis-t (d/basis-t db0)})
@@ -110,9 +110,10 @@
   (testing "over the wire: the value leaves as a token (the write handler)"
     (let [note (str "ryw-wire-" (gensym))
           resp (core/command-handler
-                {:body (java.io.StringReader.
-                        (transit/write {:fn-name 'api.notes/add-note!
-                                        :args    [note]}))})
+                {:headers {"content-type" "application/transit+json"}
+                 :body    (java.io.StringReader.
+                           (transit/write {:fn-name 'api.notes/add-note!
+                                           :args    [note]}))})
           body (transit/read (:body resp))]   ;; no read handlers: a generic token
       (is (= 200 (:status resp)))
       (is (transit/token? (:result body)))

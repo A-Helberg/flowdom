@@ -12,8 +12,8 @@
   client. The marker needs no registration anywhere — a generic token
   writes under its own tag."
   (:require [missionary.core :as m]
-            [solidrpc.transit :as transit]
-            #?(:cljs [solidrpc.client :as call])))
+            [flowrpc.transit :as transit]
+            #?(:cljs [flowrpc.client :as call])))
 
 (def tag "app/viewer")
 

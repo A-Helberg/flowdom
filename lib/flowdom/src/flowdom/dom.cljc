@@ -12,8 +12,12 @@
   - pending renders the nearest `:fallback`; errors reach the nearest
     :error-boundary, whose retry remounts its subtree
 
-  Propagation is synchronous: a swap! has patched the DOM by the time
-  it returns. (Frame batching is future work — see the design doc.)
+  Propagation is synchronous by default: a swap! has patched the DOM
+  by the time it returns. `(mount hiccup el {:schedule :frame})` opts
+  into batching instead — updates coalesce (latest wins, per region)
+  and flush once per animation frame; initial mounts always render
+  synchronously. Uncaught errors reach the root :on-error hook (see
+  `mount`) or console.error without one.
 
   CLJS only; the file is .cljc so the shared namespace loads on the JVM
   (where flowdom.core is the renderer), but `mount` is browser-side."
@@ -74,7 +78,9 @@
      (defn- set-prop! [el k v]
        (cond
          (= k :class)
-         (set! (.-className el) (str (or (fd/class-str v) "")))
+         ;; setAttribute, not .className: identical for HTML, and SVG
+         ;; elements' className is a read-only SVGAnimatedString
+         (.setAttribute el "class" (str (or (fd/class-str v) "")))
 
          (= k :innerHTML)
          (set! (.-innerHTML el) (str v))
@@ -107,15 +113,50 @@
      (defn- spawn!
        "Run a consumer process over a flow; on-value per emission. Returns a
   cancel thunk. Failures after cancellation are teardown noise, not
-  errors — the stopped flag swallows them."
-       [flow on-value on-fail]
-       (let [stopped (volatile! false)
-             cancel  ((m/reduce (fn [_ v] (on-value v) nil) nil (rx/unwrap flow))
-                      (fn [_] nil)
-                      (fn [e] (when-not @stopped (on-fail e))))]
+  errors — the stopped flag swallows them.
+
+  With a ctx :schedule!, the FIRST emission still applies synchronously
+  (initial mounts must render) and later ones are handed to the
+  scheduler keyed by this region — latest wins, a disposed region's
+  queued patch is a no-op."
+       [ctx flow on-value on-fail]
+       (let [stopped   (volatile! false)
+             schedule! (:schedule! ctx)
+             first?    (volatile! true)
+             deliver!  (fn [v]
+                         (if (or (nil? schedule!) @first?)
+                           (do (vreset! first? false)
+                               (on-value v))
+                           (schedule! stopped
+                                      (fn [] (when-not @stopped (on-value v))))))
+             cancel    ((m/reduce (fn [_ v] (deliver! v) nil) nil (rx/unwrap flow))
+                        (fn [_] nil)
+                        (fn [e] (when-not @stopped (on-fail e))))]
          (fn []
            (vreset! stopped true)
            (cancel))))
+
+     (defn- make-scheduler
+       "nil/:sync → nil (synchronous propagation). :frame → batch on
+  requestAnimationFrame. A fn → custom: called with a 0-arg flush!
+  whenever a flush needs scheduling (tests drive this directly).
+  Patches coalesce per region between flushes — latest wins."
+       [mode]
+       (when (and (some? mode) (not= mode :sync))
+         (let [request   (if (= mode :frame)
+                           (fn [flush!] (js/requestAnimationFrame (fn [_] (flush!))))
+                           mode)
+               queue     (js/Map.)
+               scheduled (volatile! false)]
+           (fn schedule! [key thunk]
+             (.set queue key thunk)
+             (when-not @scheduled
+               (vreset! scheduled true)
+               (request (fn flush! []
+                          (vreset! scheduled false)
+                          (let [thunks (js/Array.from (.values queue))]
+                            (.clear queue)
+                            (doseq [t thunks] (t))))))))))
 
      (declare mount-child)
 
@@ -153,7 +194,7 @@
                  :else                 (render! v)))]
          (.insertBefore parent start anchor)
          (.insertBefore parent end anchor)
-         (let [cancel (spawn! content patch! (fn [e] (report-error! ctx e)))]
+         (let [cancel (spawn! ctx content patch! (fn [e] (report-error! ctx e)))]
            (fn []
              (cancel)
              (dispose-all! inner)))))
@@ -162,7 +203,7 @@
 ;; elements
 
      (defn- spawn-prop! [el k pv ctx]
-       (spawn! pv
+       (spawn! ctx pv
                (fn [v]
                  (cond
                    (rx/pending-value? v) nil
@@ -170,17 +211,47 @@
                    :else                 (set-prop! el k v)))
                (fn [e] (report-error! ctx e))))
 
+     (defn- spawn-handler!
+       "An rx-valued :on* prop: the CURRENT emission is the listener.
+  Each change swaps the listener; pending means no listener yet; nil
+  emissions detach."
+       [el k pv ctx]
+       (let [ev      (event-name k)
+             current (volatile! nil)]
+         (spawn! ctx pv
+                 (fn [v]
+                   (cond
+                     (rx/pending-value? v) nil
+                     (rx/err? v)           (report-error! ctx (:error v))
+                     :else
+                     (do (when-let [old @current]
+                           (.removeEventListener el ev old))
+                         (vreset! current v)
+                         (when v (.addEventListener el ev v)))))
+                 (fn [e] (report-error! ctx e)))))
+
+     (def ^:private svg-ns "http://www.w3.org/2000/svg")
+
      (defn- mount-element [parent anchor ctx v]
        (let [[tag props children] (fd/normalize v)
              fb       (:fallback props)
              ctx      (if (some? fb) (assoc ctx :fallback fb) ctx)
              on-mount (:on-mount props)
              props    (dissoc props :fallback :on-mount)
-             el       (.createElement (.-ownerDocument parent) (name tag))
+             ;; <svg> enters the SVG namespace; every descendant stays
+             ;; in it except children of <foreignObject>, which are
+             ;; HTML again
+             svg?     (or (= tag :svg) (boolean (:svg? ctx)))
+             ctx      (assoc ctx :svg? (and svg? (not= tag :foreignObject)))
+             el       (if svg?
+                        (.createElementNS (.-ownerDocument parent) svg-ns (name tag))
+                        (.createElement (.-ownerDocument parent) (name tag)))
              ds       (array)]
          (doseq [[k pv] props]
            (cond
-             (handler-key? k) (.addEventListener el (event-name k) pv)
+             (handler-key? k) (if (rx/rx? pv)
+                                (.push ds (spawn-handler! el k pv ctx))
+                                (.addEventListener el (event-name k) pv))
              (rx/rx? pv)      (.push ds (spawn-prop! el k pv ctx))
              :else            (set-prop! el k pv)))
          (.push ds (mount-children el nil ctx children))
@@ -205,14 +276,41 @@
        (let [start (.createComment (.-ownerDocument parent) "for")
              end   (.createComment (.-ownerDocument parent) "/for")
              cache (volatile! {})
+             ;; pending state — the same contract as the JVM interpreter:
+             ;; an items source with no value yet renders the enclosing
+             ;; :fallback. Row state is not guaranteed across a pending
+             ;; episode (here rows are dropped; the spine retains them).
+             fb-dispose (volatile! nil)
+             clear-all! (fn []
+                          (doseq [[_ e] @cache] ((:dispose e)))
+                          (vreset! cache {})
+                          (when-let [d @fb-dispose] (d) (vreset! fb-dispose nil))
+                          (clear-range! start end))
+             show-fallback!
+             (fn []
+               (when (nil? @fb-dispose)
+                 (clear-all!)
+                 (vreset! fb-dispose (mount-child parent end ctx (:fallback ctx)))))
+             hide-fallback!
+             (fn []
+               (when-let [d @fb-dispose]
+                 (d)
+                 (vreset! fb-dispose nil)
+                 (clear-range! start end)))
              patch!
              (fn [v]
                (cond
-                 (rx/pending-value? v) nil
+                 (rx/pending-value? v) (show-fallback!)
                  (rx/err? v) (report-error! ctx (:error v))
                  :else
                  (let [xs (vec v)
                        ks (mapv key-fn xs)
+                       _  (when (and (seq ks) (not (apply distinct? ks)))
+                            ;; same error, same route as the JVM interpreter:
+                            ;; to the nearest :error-boundary
+                            (throw (ex-info "flowdom: for-by keys must be distinct"
+                                            {:keys ks})))
+                       _  (hide-fallback!)
                        prev @cache]
               ;; unmount departed keys
                    (doseq [[k e] prev]
@@ -246,14 +344,21 @@
          (.insertBefore parent start anchor)
          (.insertBefore parent end anchor)
          (if (vector? items)
-           (do (patch! items)
+           (do (try (patch! items)
+                    (catch :default e (report-error! ctx e)))
                (fn []
-                 (doseq [[_ e] @cache] ((:dispose e)))))
-           (let [cancel (spawn! (items-flow items) patch!
-                                (fn [e] (report-error! ctx e)))]
-             (fn []
-               (cancel)
-               (doseq [[_ e] @cache] ((:dispose e))))))))
+                 (clear-all!)))
+           (do
+             ;; no value yet — pending, exactly like the JVM interpreter
+             (show-fallback!)
+             (let [cancel (spawn! ctx (items-flow items)
+                                  (fn [v]
+                                    (try (patch! v)
+                                         (catch :default e (report-error! ctx e))))
+                                  (fn [e] (report-error! ctx e)))]
+               (fn []
+                 (cancel)
+                 (clear-all!)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; portal
@@ -265,6 +370,7 @@
   portal's position cancels and removes the ported content."
        [parent anchor ctx v]
        (let [[_ props children] (fd/normalize v)
+             ctx    (dissoc ctx :svg?)
              target (or (:mount props)
                         (.-body (.-ownerDocument parent)))
              ;; a marker holds the portal's place in its own parent so
@@ -345,6 +451,18 @@
        "Mount `hiccup` into DOM element `container`. Returns a dispose fn
   that cancels every process and clears the container.
 
+  Opts:
+    :on-error  (fn [e remount!]) — the ROOT error hook: every error no
+               :error-boundary caught lands here instead of the
+               console. `remount!` tears the whole mount down and
+               mounts fresh (deferred to a microtask) — the root-level
+               retry. Errors inside boundaries never reach it.
+    :schedule  :sync (default) — a swap! has patched the DOM by the
+               time it returns. :frame — updates coalesce per region
+               (latest wins) and flush once per animation frame;
+               initial mounts still render synchronously. A fn —
+               custom scheduler, called with a 0-arg flush! (tests).
+
   Dev mode — `(mount hiccup container {:spine? true})` — attaches BOTH
   consumers: the DOM is patched as usual, and a spine keeps the live
   tree as a value. Returns a handle instead of a fn:
@@ -361,17 +479,45 @@
   instantiated per consumer and won't be reflected in the spine;
   ns-level state always is."
        ([hiccup container]
-        (let [d (mount-child container nil {} hiccup)]
-          (fn []
-            (d)
-            (set! (.-innerHTML container) ""))))
-       ([hiccup container {:keys [spine?]}]
-        (if-not spine?
-          (mount hiccup container)
+        (mount hiccup container {}))
+       ([hiccup container {:keys [spine? on-error schedule] :as opts}]
+        (if spine?
           (let [expanded    (fd/expand hiccup)
-                dom-dispose (mount expanded container)
+                dom-dispose (mount expanded container (dissoc opts :spine?))
                 spine       (fd/render expanded)]
             {:dispose (fn []
                         ((:cancel spine))
                         (dom-dispose))
-             :tree    (:tree spine)})))))) ;; end :cljs
+             :tree    (:tree spine)})
+          (let [sched     (make-scheduler schedule)
+                current   (volatile! nil)   ;; dispose of the live mount; nil once disposed
+                do-mount!
+                (fn do-mount! []
+                  (let [remounting (volatile! false)
+                        ;; the root remount lever: tear the whole mount
+                        ;; down and mount fresh. Deferred — the error may
+                        ;; arrive synchronously mid-propagation; tearing
+                        ;; down inside that stack is the boundary bug all
+                        ;; over again.
+                        remount!   (fn []
+                                     (when-not @remounting
+                                       (vreset! remounting true)
+                                       (js/queueMicrotask
+                                        (fn []
+                                          (when-let [d @current]
+                                            (d)
+                                            (do-mount!))))))
+                        ctx        (cond-> {}
+                                     (some? sched)  (assoc :schedule! sched)
+                                     (fn? on-error) (assoc :on-error
+                                                           (fn [e] (on-error e remount!))))
+                        d          (mount-child container nil ctx hiccup)]
+                    (vreset! current
+                             (fn []
+                               (d)
+                               (set! (.-innerHTML container) "")))))]
+            (do-mount!)
+            (fn []
+              (when-let [d @current]
+                (vreset! current nil)
+                (d))))))))) ;; end :cljs

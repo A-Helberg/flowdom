@@ -1,7 +1,7 @@
 (ns frontend.examples.missionary-resource
   (:require [flowdom.rx :refer [rx ?]]
             [missionary.core :as m]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; A task is a recipe for one async value; m/ap turns it into a
 ;; one-emission flow. This one pretends to fetch for 900 ms.

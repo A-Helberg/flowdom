@@ -1,6 +1,6 @@
 (ns frontend.examples.switch
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce status (atom :loading))
 

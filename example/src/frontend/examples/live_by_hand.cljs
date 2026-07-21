@@ -4,7 +4,7 @@
   (:require [api.notes :as notes]
             [flowdom.core :refer [for-by]]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce all-notes (notes/all-notes<))
 

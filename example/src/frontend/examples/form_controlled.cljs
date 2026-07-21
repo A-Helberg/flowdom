@@ -1,6 +1,6 @@
 (ns frontend.examples.form-controlled
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce email (atom ""))
 

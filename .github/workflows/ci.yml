@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  jvm:
+    name: JVM tests (flowdom lib + example full-stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ hashFiles('**/deps.edn') }}
+          restore-keys: deps-
+      - name: flowdom lib tests
+        working-directory: lib/flowdom
+        run: clojure -M:test
+      - name: example full-stack JVM tests
+        working-directory: example
+        run: clojure -M:jvm-test
+
+  node:
+    name: Browser tests (happy-dom) + app build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ hashFiles('**/deps.edn') }}
+          restore-keys: deps-
+      - name: install JS deps
+        working-directory: example
+        run: bun install --frozen-lockfile
+      - name: compile node tests
+        working-directory: example
+        run: bunx shadow-cljs -A:cljs:test compile node-test
+      - name: run node tests
+        working-directory: example
+        run: node --conditions=browser out/node-tests.js
+      - name: compile the app
+        working-directory: example
+        run: bunx shadow-cljs -A:cljs compile app

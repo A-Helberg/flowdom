@@ -1,7 +1,7 @@
 (ns frontend.examples.rpc-rooms
   (:require [api.chat :as chat]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; state, query and command are set up together in the component body
 ;; (it runs once): the query FOLLOWS `room` — picking a room closes

@@ -1,5 +1,5 @@
 (ns frontend.fake-rpc
-  "A stand-in for solidrpc.client so the tutorial can run as a
+  "A stand-in for flowrpc.client so the tutorial can run as a
   static site — same signatures, no server. An atom plays the
   database; a sleep plays the network.
 
@@ -12,7 +12,7 @@
   Faked away: the SSE wire format (:full/:patch diffs), reconnection,
   and the server-side registry — the two maps below play that part."
   (:require [missionary.core :as m]
-            [solidrpc.stream :as stream]))
+            [flowrpc.stream :as stream]))
 
 (defonce db (atom {:messages ["welcome to the fake backend"]
                    :rooms    {"general" ["welcome to #general"]
@@ -34,7 +34,7 @@
                     (apply f (m/?< (m/watch db)) args))))
 
 (defn query
-  "Symbol + args → cold missionary flow of results, like solidrpc's
+  "Symbol + args → cold missionary flow of results, like flowrpc's
   query. Watchable args are followed, courtesy of the real
   follow-args."
   [fn-id & args]
@@ -42,7 +42,7 @@
     (stream/follow-args (vec args) #(run-query f %))))
 
 (defn command
-  "Symbol + args → promise, like solidrpc's command."
+  "Symbol + args → promise, like flowrpc's command."
   [fn-id & args]
   (let [f (commands fn-id)]
     (js/Promise.

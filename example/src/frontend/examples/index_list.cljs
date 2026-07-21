@@ -1,7 +1,7 @@
 (ns frontend.examples.index-list
   (:require [flowdom.core :refer [for-by]]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce readings (atom [12 47 3]))
 

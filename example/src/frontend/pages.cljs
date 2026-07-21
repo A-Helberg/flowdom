@@ -1,15 +1,9 @@
 (ns frontend.pages
   "The guide's content. Each page is prose plus example blocks whose
   source is inlined at compile time with shadow.resource/inline — the
-  code you read IS the code that runs, they cannot drift apart.
-
-  Pages not yet ported to flowdom stay in the sidebar with a `soon`
-  badge and render a placeholder with their original solidclj sources;
-  their original prose is preserved, commented out, at the bottom of
-  this file — porting a page = write the example, uncomment the prose,
-  update it, drop the stub."
+  code you read IS the code that runs, they cannot drift apart."
   (:require [shadow.resource :as rc]
-            [solidclj.docs.ui :as ui]
+            [flowdom.docs.ui :as ui]
             [frontend.examples.perf :as perf]
             [frontend.examples.hello :as hello]
             [frontend.examples.elements :as elements]
@@ -41,8 +35,7 @@
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-by-hand :as live-by-hand]
-            [frontend.examples.live-notes :as live-notes]
-            ))
+            [frontend.examples.live-notes :as live-notes]))
 
 (def sections
   [{:title "Introduction"
@@ -396,8 +389,7 @@
         "dependency you can clear."]]
       :examples
       [{:source    (rc/inline "frontend/examples/error_boundary.cljs")
-        :component error-boundary/example}]}
-]}
+        :component error-boundary/example}]}]}
 
    {:title "React interop"
     :pages
@@ -528,13 +520,13 @@
       [{:source    (rc/inline "frontend/examples/missionary_tracked.cljs")
         :component missionary-tracked/example}]}]}
 
-   {:title "solidrpc"
+   {:title "flowrpc"
     :pages
     [{:id    :rpc-chat
       :title "Queries & commands"
       :prose
       [:<>
-       [:p "solidrpc is CQRS-shaped: reads and writes are different "
+       [:p "flowrpc is CQRS-shaped: reads and writes are different "
         "problems, so they are different operations. A "
         [:strong "query"] " is a read — it wants to stay correct as "
         "server state changes. A " [:strong "command"] " is a write "
@@ -599,20 +591,20 @@
         "tool for now; when WebTransport (bidirectional streams "
         "over QUIC) matures, that choice is worth revisiting. For "
         "streamed reads and one-shot writes, SSE is strictly "
-        "simpler; the solidrpc README has the longer version of "
+        "simpler; the flowrpc README has the longer version of "
         "this argument."]
        [:h2 "The api namespace"]
        [:p "Components never write " [:code "rpc/query"] " at call "
         "sites. The shape is a " [:code ".cljc"]
         " api namespace per domain — the " [:code ":clj"] " branch is "
         "the real implementation, the " [:code ":cljs"] " branch "
-        "delegates to solidrpc, and the var is registered under its "
+        "delegates to flowrpc, and the var is registered under its "
         "own symbol, so both sides call " [:code "(chat/messages)"]
         " and the rpc plumbing lives in one file:"]
        [ui/code-block
         "(ns api.chat
   (:require [missionary.core :as m]
-            #?(:cljs [solidrpc.client :as rpc])))
+            #?(:cljs [flowrpc.client :as rpc])))
 
 ;; the server's state — an atom is all this page needs
 #?(:clj (defonce state (atom {:messages []})))
@@ -626,8 +618,8 @@
      :cljs (rpc/command `send! text)))
 
 ;; server startup:
-;; (solidrpc.registry/register! #'api.chat/messages)
-;; (solidrpc.registry/register! #'api.chat/send!)"]
+;; (flowrpc.registry/register! #'api.chat/messages)
+;; (flowrpc.registry/register! #'api.chat/send!)"]
        [:p "The reason for the shape is referential transparency: "
         [:code "(chat/messages)"] " returns a flow of the messages "
         "on either platform. The " [:code ":clj"] " caller gets it "
@@ -750,7 +742,7 @@
   (:require [missionary.core :as m]
             #?(:clj  [datomic.api :as d])
             #?(:clj  [server.notes :as notes])
-            #?(:cljs [solidrpc.client :as rpc])))
+            #?(:cljs [flowrpc.client :as rpc])))
 
 (defn reports
   \"The tx-report feed so far — shaped for the wire, no db values.\"
@@ -764,7 +756,7 @@
 
 ;; add-note! and ping! are commands — the same shape as api.chat/send!
 ;; server startup:
-;; (solidrpc.registry/register! #'api.txes/reports)"]
+;; (flowrpc.registry/register! #'api.txes/reports)"]
        [:p "Transact a note and the report lands with its basis-t "
         "and datoms — and so does the second button's transaction, "
         "which touches no " [:code ":note/*"] " attribute and which "
@@ -802,7 +794,7 @@
   (:require [missionary.core :as m]
             #?(:clj  [datomic.api :as d])
             #?(:clj  [server.notes :as store])
-            #?(:cljs [solidrpc.client :as rpc])))
+            #?(:cljs [flowrpc.client :as rpc])))
 
 ;; the pure part: a function of a database value
 #?(:clj
@@ -840,7 +832,7 @@
       :prose
       [:<>
        [:p "The composition you just wrote is the shape of every "
-        "read endpoint, so " [:code "solidrpc.live"] " packages it: "
+        "read endpoint, so " [:code "flowrpc.live"] " packages it: "
         [:code "(live/live tx-reports< db f)"] " is the previous "
         "page's pipeline — the head's db, then " [:code ":db-after"]
         " per report, each through " [:code "f"] ", deduplicated. "
@@ -903,7 +895,7 @@
          "The api namespace (api.notes)"]
         [ui/code-block (rc/inline "api/notes.cljc")]]
        [:p "The demo below runs the " [:strong "real"] " combinator — "
-        [:code "solidrpc.live"] " is cljc, this is the same code the "
+        [:code "flowrpc.live"] " is cljc, this is the same code the "
         "server runs. Both panels are pure components — "
         [:code "[live-panel db]"] " reads the facade's flow, and "
         [:code "[pinned-panel db]"] " is the previous page's "
@@ -961,10 +953,10 @@
         "construct a user map, no auth machinery anywhere) and "
         "reconstructs one at the wire. And because reconstruction "
         "happens server-side — from your session store, a JWT, a db "
-        "read; solidrpc never knows — the client can't forge what it "
+        "read; flowrpc never knows — the client can't forge what it "
         "never builds. A marker token carries nothing at all."]
        [:p "For the db, the rep is a basis-t: a database value "
-        "leaves the server as " [:code "#solid/db {:basis-t 1010}"]
+        "leaves the server as " [:code "#flowdom/db {:basis-t 1010}"]
         " and comes back as an " [:em "actual database value"]
         " via " [:code "d/as-of"] ". That closes every gap the "
         "previous page listed. The client passes the token as "
@@ -997,7 +989,7 @@
         "ignore it), and whatever it returns "
         [:em "becomes the argument"]
         " the endpoint fn receives. The canonical value type here is "
-        "the current user, but solidrpc ships no auth system, so the "
+        "the current user, but flowrpc ships no auth system, so the "
         "example uses two stand-ins chosen to show the two closure "
         "lifetimes: server-info reconstructs from a closure made at "
         [:em "startup"] ", the viewer from a closure over the "
@@ -1048,19 +1040,19 @@
 (defn command-handler [req]
   (rpc/handle-command req
     {:write-handlers
-     {datomic.db.Db {:tag \"solid/db\"
+     {datomic.db.Db {:tag \"flowdom/db\"
                      :rep (fn [db] {:basis-t (d/basis-t db)})}}}))
 
-;; the client gets #solid/db {:basis-t t} — a token like any other —
+;; the client gets #flowdom/db {:basis-t t} — a token like any other —
 ;; and anchors its next read with it
 (-> (add-note! \"buy milk\")
     (.then (fn [db] (reset! current-db db))))"]
        [:p "Note that both handler maps are server-side. The client "
         "decodes and encodes these tags with no handlers at all: "
-        "solidrpc's transit layer has one default — a tag it has no "
+        "flowrpc's transit layer has one default — a tag it has no "
         "read handler for decodes to a generic token, a pair of tag "
         "and rep with value equality, and a token encodes back out "
-        "under its own tag. So " [:code "#solid/db {:basis-t 1010}"]
+        "under its own tag. So " [:code "#flowdom/db {:basis-t 1010}"]
         " arrives in the browser as plain data, and when the client "
         "passes it back as an argument it leaves unchanged; only "
         "the server's read handler for that tag ever looks inside. "
@@ -1075,7 +1067,7 @@
        [:h2 "Authorization"]
        [:p "Two conventions complete the picture. A handler that "
         "rejects — no session, expired credentials — throws "
-        [:code "(ex-info \"no session\" {:solidrpc/status 401})"]
+        [:code "(ex-info \"no session\" {:flowrpc/status 401})"]
         " and the response carries that status, so clients can tell "
         "an invalid session from a server error. And because decode "
         "runs once per request while an SSE connection can live for "
@@ -1090,7 +1082,47 @@
         "(authorize against the present, read domain data at t); a "
         "token is usually a re-observation of answers the client was "
         "already served; and data that must not be readable at "
-        [:em "any"] " t is excision's job."]]}]}
+        [:em "any"] " t is excision's job."]
+       [:h2 "CSRF"]
+       [:p "Everything above assumes the request is one your user "
+        "actually made. When authority rides an ambient session "
+        "cookie, that assumption needs defending: any page your "
+        "logged-in user visits can " [:code "fetch"] " your command "
+        "endpoint, and the browser attaches the cookie because the "
+        "request goes to " [:em "your"] " origin. The attacker never "
+        "reads the response — CORS blocks that — but a "
+        [:code "swap!"] " on your database already happened. That is "
+        "cross-site request forgery: the request is authentic, its "
+        [:em "origin"] " is not."]
+       [:p "The backbone is a cookie attribute, not application code: "
+        "set the session cookie " [:code "SameSite=Lax"] " (or "
+        [:code "Strict"] ") and the browser stops attaching it to "
+        "cross-site requests at all. It is the only control that also "
+        "covers the query stream, because " [:code "EventSource"]
+        " can send neither a custom header nor a content-type — so a "
+        "token-header scheme, the usual CSRF defense, is structurally "
+        "impossible for SSE. SameSite is what protects reads."]
+       [:p "For commands, flowrpc adds one check on top: "
+        [:code "handle-command"] " rejects any request that doesn't "
+        "declare " [:code "content-type: application/transit+json"]
+        " with a 415. The reason is a browser rule — a cross-site "
+        [:code "fetch"] " may only send a browser-\"simple\" "
+        "content-type (" [:code "text/plain"] ", form-urlencoded, "
+        "multipart) without "
+        "first sending a CORS preflight; a preflight for "
+        [:code "transit+json"] " is one your server (having no "
+        "permissive CORS policy) refuses. Requiring the transit "
+        "content-type therefore forces every forger through a gate "
+        "they cannot open. It is anti-forgery only — "
+        [:strong "authorization is still the endpoint fn's job"] "."]
+       [:p "That covers same-site cookie deployments, which is most. "
+        "If yours must set " [:code "SameSite=None"] " (a cookie sent "
+        "cross-site by design — embedded widgets, separate API "
+        "origins), SameSite protects nothing and you add the classic "
+        "layer in front of these handlers: an " [:strong "Origin"]
+        " allowlist on state-changing requests, or a double-submit "
+        "token. flowrpc leaves that to a middleware you mount, "
+        "because the allowed origins are yours to name."]]}]}
 
    {:title "Testing"
     :pages
@@ -1194,7 +1226,7 @@
         "their local state isn't shared across views — ns-level state "
         "always is."]
        [:h2 "Full-stack tests"]
-       [:p "Because the interpreter, " [:code "solidrpc.live"]
+       [:p "Because the interpreter, " [:code "flowrpc.live"]
         " and the api namespaces are all cljc, the whole stack from "
         "component to database runs in one JVM process: the real "
         [:code "notes-view"] " (the notes UI — an input, an Add "

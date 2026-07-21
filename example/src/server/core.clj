@@ -4,8 +4,8 @@
    [reitit.ring :as ring]
    [ring.middleware.params :refer [wrap-params]]
    [taoensso.timbre :as log]
-   [solidrpc.registry :as registry]
-   [solidrpc.server :as solidrpc]
+   [flowrpc.registry :as registry]
+   [flowrpc.server :as flowrpc]
    ;; Require api namespaces so their vars exist before registration.
    [api.clock]
    [api.notes]
@@ -68,10 +68,10 @@
           {api.viewer/tag (viewer-from req)}))
 
 (defn query-handler [req]
-  (solidrpc/handle-query req (rpc-opts req)))
+  (flowrpc/handle-query req (rpc-opts req)))
 
 (defn command-handler [req]
-  (solidrpc/handle-command req (rpc-opts req)))
+  (flowrpc/handle-command req (rpc-opts req)))
 
 (def handler
   (wrap-params

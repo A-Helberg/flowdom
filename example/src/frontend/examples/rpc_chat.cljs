@@ -4,7 +4,7 @@
   ;; server (or, on this static site, to the fake one).
   (:require [api.chat :as chat]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; (chat/messages) returns a shared missionary flow. Lazy end to end:
 ;; the connection opens when this page first renders and closes when

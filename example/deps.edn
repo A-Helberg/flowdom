@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
- :deps {solidjclj/flowdown           {:local/root "../lib/flowdom/"}
-        solidjclj/solidclj-docs      {:local/root "../lib/solidclj-docs/"}
-        solidjclj/solidrpc           {:local/root "../lib/solidrpc/"}
+ :deps {io.github.a-helberg/flowdom            {:local/root "../lib/flowdom/"}
+        io.github.a-helberg/flowdom-docs      {:local/root "../lib/flowdom-docs/"}
+        io.github.a-helberg/flowrpc           {:local/root "../lib/flowrpc/"}
         aleph/aleph                  {:mvn/version "0.9.0"}
         com.datomic/peer             {:mvn/version "1.0.7387"}
         metosin/reitit               {:mvn/version "0.9.1"}
@@ -16,7 +16,7 @@
   :test {:extra-paths ["test"]}
 
   ;; JVM tests: render the real components against the in-process
-  ;; server stack (solidrpc.live + datomic) — zero HTTP, zero mocks.
+  ;; server stack (flowrpc.live + datomic) — zero HTTP, zero mocks.
   ;; Run with: clojure -M:jvm-test
   :jvm-test {:extra-paths ["test"]
              :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}

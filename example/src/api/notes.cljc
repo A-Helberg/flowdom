@@ -7,7 +7,7 @@
     at t', no flow required.
   - `all-notes<` lifts it: the `<` says flow. Its db argument is the
     anchor — a real db value on the JVM, an opaque token on the
-    client (solidrpc.transit exchanges the two at the wire), or nil
+    client (flowrpc.transit exchanges the two at the wire), or nil
     for no floor (the feed's head supplies the present). Read it at
     point of use: (rx (? (all-notes< db))).
   - The facade is registered under its own symbol — the :cljs branch
@@ -19,8 +19,8 @@
   opens, no query runs, until something subscribes."
   (:require #?@(:clj  [[datomic.api :as d]
                        [server.notes :as store]
-                       [solidrpc.live :as live]]
-                :cljs [[solidrpc.client :as call]])))
+                       [flowrpc.live :as live]]
+                :cljs [[flowrpc.client :as call]])))
 
 #?(:clj
    (defn all-notes

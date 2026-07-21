@@ -1,5 +1,5 @@
 (ns frontend.examples.on-mount
-  (:require [solidclj.docs.ui :as ui]))
+  (:require [flowdom.docs.ui :as ui]))
 
 (defn example []
   ;; the atom holds a DOM node, not app state — nothing here is reactive

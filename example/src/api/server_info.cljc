@@ -7,8 +7,8 @@
   closure captures — the marker, the facade and the wire are
   identical."
   (:require [missionary.core :as m]
-            [solidrpc.transit :as transit]
-            #?(:cljs [solidrpc.client :as call])))
+            [flowrpc.transit :as transit]
+            #?(:cljs [flowrpc.client :as call])))
 
 (def tag "app/server-info")
 

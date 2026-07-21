@@ -134,13 +134,46 @@
       (dv "ann")
       (is (= [:div [:p "hi " "ann"]] (snapshot t))))))
 
-(deftest pending-propagates-without-fallback
+(deftest pending-without-any-fallback-renders-nothing
+  ;; DOM parity: a pending slot with no inherited :fallback is empty —
+  ;; surrounding structure stays, the slot contributes nothing
   (let [dv    (m/dfv)
         user< (m/ap (m/? dv))]
     (with-render [t [:div (rx [:p (? user<)])]]
-      (is (= rx/pending (snapshot t)))
+      (is (= [:div nil] (snapshot t)))
       (dv "ann")
       (is (= [:div [:p "ann"]] (snapshot t))))))
+
+(deftest fallback-renders-in-place-at-the-pending-slot
+  ;; the fallback is INHERITED and renders AT the pending slot —
+  ;; intermediate structure and non-pending siblings stay live
+  (let [dv    (m/dfv)
+        user< (m/ap (m/? dv))]
+    (with-render [t [:div {:fallback [:em "…"]}
+                     [:ul [:li "static"] (rx [:li (? user<)])]
+                     [:p "sibling stays"]]]
+      (is (= [:div [:ul [:li "static"] [:em "…"]] [:p "sibling stays"]]
+             (snapshot t)))
+      (dv "x")
+      (is (= [:div [:ul [:li "static"] [:li "x"]] [:p "sibling stays"]]
+             (snapshot t))))))
+
+(deftest nearest-fallback-declaration-wins
+  (let [dv    (m/dfv)
+        user< (m/ap (m/? dv))]
+    (with-render [t [:div {:fallback [:em "outer"]}
+                     [:section {:fallback [:em "inner"]}
+                      (rx [:p (? user<)])]]]
+      (is (= [:div [:section [:em "inner"]]] (snapshot t))))))
+
+(deftest pending-props-are-omitted-until-the-first-value
+  ;; DOM parity: spawn-prop! leaves the attribute unset while pending
+  (let [dv     (m/dfv)
+        class< (m/ap (m/? dv))]
+    (with-render [t [:p {:class (rx (? class<))} "x"]]
+      (is (= [:p "x"] (snapshot t)) "pending prop omitted, element live")
+      (dv "big")
+      (is (= [:p {:class "big"} "x"] (snapshot t))))))
 
 ;; ---------------------------------------------------------------------------
 ;; error boundary: errors travel as values, heal on dependency change,
@@ -343,3 +376,63 @@
       (is (= [:div nil] (snapshot t)))
       (reset! on? true)
       (is (= 2 @runs) "a remount is a fresh run"))))
+
+;; ---------------------------------------------------------------------------
+;; churn detection: the build-a-flow-inside-the-body footgun
+
+(deftest building-a-flow-inside-the-body-warns-and-trips-the-breaker
+  (let [warnings (atom [])
+        tick     (atom 0)]
+    (binding [rx/*on-churn* #(swap! warnings conj %)]
+      ;; the footgun: m/watch built INSIDE the body — a brand-new flow
+      ;; every run, whose synchronous first emission re-triggers the
+      ;; run: an infinite loop without the breaker
+      (with-render [t [:span (rx (? (m/watch tick)))]]
+        (is (= 1 (count @warnings)) "churn warned, exactly once per rx")
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"runaway rx"
+                              (snapshot t))
+            "the breaker stopped the loop with an error")))))
+
+(deftest branch-toggling-does-not-warn
+  ;; conditional branches re-create RECENTLY-DROPPED sources — that's
+  ;; normal dynamic dependency tracking, not churn
+  (let [warnings (atom [])
+        c (atom true)
+        a (atom :a)
+        b (atom :b)]
+    (binding [rx/*on-churn* #(swap! warnings conj %)]
+      (with-render [t [:span (rx (name (if (? c) (? a) (? b))))]]
+        (dotimes [_ 6] (swap! c not))
+        (is (= [:span "a"] (snapshot t)))
+        (is (empty? @warnings))))))
+
+(deftest hoisted-flows-do-not-warn
+  (let [warnings (atom [])
+        tick     (atom 0)
+        w        (m/watch tick)]
+    (binding [rx/*on-churn* #(swap! warnings conj %)]
+      (with-render [t [:span (rx (? w))]]
+        (dotimes [_ 5] (swap! tick inc))
+        (is (= [:span 5] (snapshot t)))
+        (is (empty? @warnings) "one stable source, zero churn")))))
+
+;; ---------------------------------------------------------------------------
+;; for-by contract: distinct keys, pending → fallback (parity with the DOM)
+
+(deftest for-by-duplicate-keys-error-to-the-boundary
+  (with-render [t [:error-boundary {:fallback (fn [e _] [:p (ex-message e)])}
+                   [:ul (for-by identity ["a" "a"]
+                                (fn [x] [:li (rx (? x))]))]]]
+    (is (re-find #"keys must be distinct" (str (snapshot t))))))
+
+(deftest for-by-pending-renders-the-enclosing-fallback
+  (let [ready (atom false)
+        items (atom ["a" "b"])
+        src   (rx (if (? ready) (? items) (? m/none)))]
+    (with-render [t [:div {:fallback [:em "loading"]}
+                     [:ul (for-by identity src (fn [x] [:li (rx (? x))]))]]]
+      (is (re-find #"loading" (str (snapshot t))) "no value yet → fallback")
+      (reset! ready true)
+      (is (= [:div [:ul [:li "a"] [:li "b"]]] (snapshot t)))
+      (reset! ready false)
+      (is (re-find #"loading" (str (snapshot t))) "pending again → fallback"))))

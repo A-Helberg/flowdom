@@ -1,6 +1,6 @@
 (ns api.clock
   (:require
-   #?(:cljs [solidrpc.client :as solidrpc])
+   #?(:cljs [flowrpc.client :as flowrpc])
    #?(:clj [manifold.stream :as s])))
 
 (defn time-flow
@@ -10,7 +10,7 @@
   []
   #?(:clj  (s/periodically (long 1000)
                            (fn [] (str (java.util.Date.))))
-     :cljs (solidrpc/query `time-flow)))
+     :cljs (flowrpc/query `time-flow)))
 
 (defn slow-time-flow
   "Like time-flow but waits 3 seconds before emitting the first value."
@@ -22,13 +22,13 @@
                                           (fn [] (str (java.util.Date.))))
                           stream))
              stream)
-     :cljs (solidrpc/query `slow-time-flow)))
+     :cljs (flowrpc/query `slow-time-flow)))
 
 (defn echo
   "Simple command that echoes its argument back."
   [msg]
   #?(:clj  {:echo msg :at (str (java.util.Date.))}
-     :cljs (solidrpc/command `echo msg)))
+     :cljs (flowrpc/command `echo msg)))
 
 (defn scoreboard-flow
   "Emits a map of player->score every second, incrementing one random player.
@@ -42,4 +42,4 @@
                 (let [p (rand-nth players)]
                   (swap! scores update p + (+ 1 (rand-int 15)))
                   @scores))))
-     :cljs (solidrpc/query `scoreboard-flow)))
+     :cljs (flowrpc/query `scoreboard-flow)))

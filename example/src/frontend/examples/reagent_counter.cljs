@@ -1,7 +1,7 @@
 (ns frontend.examples.reagent-counter
   (:require [reagent.core :as r]
             [flowdom.react.reagent :as react.reagent]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce step (atom 1))
 

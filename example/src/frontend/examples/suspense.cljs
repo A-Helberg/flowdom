@@ -1,7 +1,7 @@
 (ns frontend.examples.suspense
   (:require [flowdom.rx :refer [rx ?]]
             [missionary.core :as m]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; A "request" is a flow built from a task: sleep 1.2s, emit once.
 ;; Memoized, because ? subscribes by flow identity — the same id must

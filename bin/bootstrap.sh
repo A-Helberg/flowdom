@@ -23,7 +23,7 @@ mise install
 
 ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 
-for dir in example lib/solidclj; do
+for dir in example; do
   echo -e "${YELLOW}Installing JS dependencies in ${dir}${NC}"
   (cd "$ROOT_DIR/$dir" && mise exec -- bun install)
 done

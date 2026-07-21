@@ -1,9 +1,9 @@
 (ns api.notes
   "Browser twin of the real api/notes.cljc (inlined on the live-queries
   page): the same pure query, facade and commands, running the real
-  solidrpc.live combinator against the stand-ins."
+  flowrpc.live combinator against the stand-ins."
   (:require [server.notes :as store]
-            [solidrpc.live :as live]))
+            [flowrpc.live :as live]))
 
 (defn all-notes
   "Pure: every note in `db` — call it with any as-of view."

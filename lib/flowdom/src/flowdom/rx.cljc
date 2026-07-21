@@ -125,13 +125,29 @@
                      (throw (ex-info "flowdom: ? expects an atom, a flow, or an rx"
                                      {:got src}))))]
         (swap! (:cells ctx) assoc src cell)
+        (swap! (:fresh ctx) conj src)
         cell)))
 
 (defn ?
   "Read a reactive source inside an rx block: returns its current value
   and subscribes the block to it. Works at any call depth — helper
   functions called from the block read freely. Accepts atoms (anything
-  IWatchable), missionary flows, and rx values."
+  IWatchable), missionary flows, and rx values.
+
+  Subscriptions are keyed by the SOURCE OBJECT's identity, and the
+  block's lifetime rules follow from that:
+
+  - A flow built inside the body is a NEW source on every re-run: its
+    old subscription is cancelled and its work restarts (connections
+    reopen, timers restart). Build the flow once, outside the body,
+    and read that one value — memoize by args when parameterized.
+    Dev runs of this pattern trigger the churn warning below.
+  - A run that doesn't read a source unsubscribes it, so a cold flow
+    read in a conditional branch stops when the branch flips away and
+    restarts from scratch when it flips back. That laziness is usually
+    what you want; to keep a subscription alive across branches, read
+    the flow through an outer rx bound outside the conditional — rx
+    blocks are shared, so the outer rx holds the one subscription."
   [src]
   (let [ctx *ctx*]
     (when (nil? ctx)
@@ -147,13 +163,83 @@
 
 (defn- gc-cells!
   "Unsubscribe every cell the last run did not read. Sources are re-read
-  on every run, so conditional branches subscribe only what they use."
+  on every run, so conditional branches subscribe only what they use.
+  Returns the srcs that were dropped."
   [ctx]
   (let [used @(:used ctx)]
-    (doseq [[src cell] @(:cells ctx)]
-      (when-not (contains? used src)
-        (swap! (:cells ctx) dissoc src)
-        ((:stop! cell))))))
+    (reduce-kv (fn [dropped src cell]
+                 (if (contains? used src)
+                   dropped
+                   (do (swap! (:cells ctx) dissoc src)
+                       ((:stop! cell))
+                       (conj dropped src))))
+               []
+               @(:cells ctx))))
+
+;; ---------------------------------------------------------------------------
+;; churn detection — the build-a-flow-inside-the-body footgun
+;;
+;; ? keys subscriptions by object identity, so a flow constructed in
+;; the rx body is a brand-new dependency every run: each re-run drops
+;; the old cell (cancelling its work) and subscribes a fresh one —
+;; reconnect loops, timers restarting from zero. The signature we
+;; detect: consecutive runs that BOTH drop cells AND create cells for
+;; sources never seen before. Re-creating a recently-dropped source is
+;; exempt — that's a conditional branch flipping back, which is fine.
+
+(def ^:private churn-threshold 3)
+(def ^:private recent-drops-cap 16)
+
+(def ^:dynamic *on-churn*
+  "Test/tooling hook: when bound, called with {:streak n} instead of
+  printing the churn warning."
+  nil)
+
+(defn- warn-churn! [info]
+  (if *on-churn*
+    (*on-churn* info)
+    (let [msg (str "[flowdom.rx] an rx re-created flow dependencies on "
+                   (:streak info) " consecutive runs. This usually means a "
+                   "flow is being BUILT inside the rx body — making it a new "
+                   "dependency every run, so its old subscription is "
+                   "cancelled and its work restarts (connections reopen, "
+                   "timers restart). Build the flow once, outside the body, "
+                   "and read that one value; memoize by args when "
+                   "parameterized. Warned once per rx.")]
+      #?(:clj  (binding [*out* *err*] (println msg))
+         :cljs (js/console.warn msg)))))
+
+(defn- note-churn! [ctx dropped]
+  (let [recent  (:recent-drops ctx)
+        seen    (set @recent)
+        novel   (remove seen @(:fresh ctx))
+        churn?  (and (seq dropped) (seq novel))
+        state   (:churn ctx)]
+    (swap! recent #(into [] (take-last recent-drops-cap (into % dropped))))
+    (if churn?
+      (let [{:keys [streak warned?]} (swap! state update :streak inc)]
+        (when (and (>= streak churn-threshold) (not warned?))
+          (swap! state assoc :warned? true)
+          (warn-churn! {:streak streak})))
+      (swap! state assoc :streak 0))))
+
+(def ^:private runaway-cap
+  "Max self-triggered re-runs in one propagation turn. The inner loop
+  only repeats when the body's own run dirtied the rx — a body that
+  writes state it reads, or a flow built inside the body whose first
+  (synchronous) emission re-triggers it. Past the cap that is a
+  runaway, and without a breaker a synchronously-ready source (m/watch,
+  an already-emitted flow) spins forever."
+  100)
+
+(defn- runaway-error []
+  (ex-info (str "flowdom: runaway rx — the body re-ran synchronously "
+                runaway-cap "+ times in one propagation turn. Either the "
+                "body writes state it reads, or a flow is built inside "
+                "the body (a new dependency every run, whose first "
+                "emission re-triggers the run). Build flows once, outside "
+                "the body; don't write what you read.")
+           {:flowdom/runaway true}))
 
 (defn- run-rx! [ctx]
   (locked
@@ -163,19 +249,28 @@
      (when (and @(:alive ctx) (not @(:running ctx)))
        (reset! (:running ctx) true)
        (try
-         (loop []
+         (loop [n 0]
            (when (and @(:alive ctx) @(:dirty ctx))
-             (reset! (:dirty ctx) false)
-             (reset! (:used ctx) #{})
-             (let [v (try
-                       (binding [*ctx* ctx] ((:thunk ctx)))
-                       (catch #?(:clj Throwable :cljs :default) e
-                         (if (pending-ex? e) pending (->Err e))))]
-               (gc-cells! ctx)
-               (when (not= v @(:last ctx))
-                 (reset! (:last ctx) v)
-                 ((:emit! ctx) v)))
-             (recur)))
+             (if (> n runaway-cap)
+               ;; THROW, don't emit: mid-spin the observe consumer may
+               ;; not be draining yet, so a second emission would block
+               ;; forever. Throwing fails the surrounding process —
+               ;; missionary's error channel carries it to the reader.
+               (do (reset! (:dirty ctx) false)
+                   (throw (runaway-error)))
+               (do
+                 (reset! (:dirty ctx) false)
+                 (reset! (:used ctx) #{})
+                 (reset! (:fresh ctx) #{})
+                 (let [v (try
+                           (binding [*ctx* ctx] ((:thunk ctx)))
+                           (catch #?(:clj Throwable :cljs :default) e
+                             (if (pending-ex? e) pending (->Err e))))]
+                   (note-churn! ctx (gc-cells! ctx))
+                   (when (not= v @(:last ctx))
+                     (reset! (:last ctx) v)
+                     ((:emit! ctx) v)))
+                 (recur (inc n))))))
          (finally
            (reset! (:running ctx) false)))))))
 
@@ -191,15 +286,18 @@
     (m/relieve {}
                (m/observe
                 (fn [emit!]
-                  (let [ctx {:cells   (atom {})
-                             :used    (atom #{})
-                             :dirty   (atom false)
-                             :running (atom false)
-                             :alive   (atom true)
-                             :last    (atom ::unset)
-                             :thunk   thunk
-                             :emit!   emit!
-                             :lock    #?(:clj (Object.) :cljs nil)}]
+                  (let [ctx {:cells        (atom {})
+                             :used         (atom #{})
+                             :fresh        (atom #{})
+                             :recent-drops (atom [])
+                             :churn        (atom {:streak 0 :warned? false})
+                             :dirty        (atom false)
+                             :running      (atom false)
+                             :alive        (atom true)
+                             :last         (atom ::unset)
+                             :thunk        thunk
+                             :emit!        emit!
+                             :lock         #?(:clj (Object.) :cljs nil)}]
                     (run-rx! ctx)
                     (fn cleanup []
                       (locked

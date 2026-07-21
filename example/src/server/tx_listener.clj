@@ -41,7 +41,7 @@
        (m/amb (m/? (m/via m/blk (.take queue)))
               (recur))))))
 
-;; db-flow and q-flow moved to solidrpc.live, generalized: the same
+;; db-flow and q-flow moved to flowrpc.live, generalized: the same
 ;; composition is now (live/live tx-reports< db f), over any feed of
 ;; reports whose head is the latest one, with anchors and :relevant?
 ;; filtering. See server.notes for the wiring.

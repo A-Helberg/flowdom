@@ -2,7 +2,7 @@
   (:require [api.notes :as notes]
             [flowdom.core :refer [for-by]]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; Both panels are pure — db anchor in, hiccup out. `live-panel`
 ;; builds recipes: the facade returns a flow, the query is lazy, so

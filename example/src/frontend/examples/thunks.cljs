@@ -1,6 +1,6 @@
 (ns frontend.examples.thunks
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defn example []
   (let [n (atom 0)]

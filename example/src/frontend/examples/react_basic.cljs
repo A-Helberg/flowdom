@@ -1,7 +1,7 @@
 (ns frontend.examples.react-basic
   (:require ["react" :refer [createElement]]
             [flowdom.react :as react]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce clicks (atom 0))
 

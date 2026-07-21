@@ -3,7 +3,7 @@
   ;; every server flow does: as a query behind an api namespace
   (:require [api.txes :as txes]
             [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 (defonce feed (txes/reports))
 

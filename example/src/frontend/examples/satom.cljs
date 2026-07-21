@@ -1,6 +1,6 @@
 (ns frontend.examples.satom
   (:require [flowdom.rx :refer [rx ?]]
-            [solidclj.docs.ui :as ui]))
+            [flowdom.docs.ui :as ui]))
 
 ;; State is a PLAIN Clojure atom — swap!, reset!, add-watch, validators,
 ;; everything works because it IS cljs.core/atom. (? temp) inside an rx

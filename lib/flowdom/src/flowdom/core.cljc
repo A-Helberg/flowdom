@@ -17,9 +17,13 @@
     [:error-boundary {:fallback (fn [err retry] ...)} child]
     anything else                 static content
 
-  Pending: an element with a `:fallback` prop renders the fallback in
-  place of any child position whose rx is pending. Without a fallback,
-  pending propagates upward (the whole subtree is pending).
+  Pending: a pending position renders the nearest inherited
+  `:fallback` — declared as an element prop, in effect for every
+  position beneath that element, rendered IN PLACE at the pending
+  slot (identical to the DOM consumer; surrounding structure and
+  siblings stay live). A pending rx-valued PROP is omitted until its
+  first value. With no fallback above it, a pending position renders
+  nothing.
 
   Errors: a throwing rx body propagates upward as a value until an
   `:error-boundary` catches it and renders its fallback; `retry`
@@ -46,7 +50,13 @@
 
   New keys mount, departed keys unmount, surviving keys keep their
   processes and state; an item whose value changed ticks only its own
-  slot."
+  slot.
+
+  The contract, identical in the browser and in the JVM interpreter:
+  keys must be DISTINCT — duplicates are an error, delivered to the
+  nearest :error-boundary. An items source with no value yet is
+  pending: the enclosing :fallback renders until the first emission.
+  Row state is not guaranteed across a pending episode."
   [key-fn items body]
   (->ForBy key-fn items body))
 
@@ -125,29 +135,26 @@
 
 (defn- slot
   "A user rx in a tree position: interpret each emitted value (memoized,
-  so inner ticks don't remount), read the interpreted node through."
-  [content]
+  so inner ticks don't remount), read the interpreted node through.
+  While the content is pending, the inherited :fallback renders in
+  place; with none, the slot renders nothing."
+  [content fb]
   (let [memo (atom nil)]
     (rx/rx*
      (fn []
-       (let [v    (rx/? content)
-             node (let [mm @memo]
-                    (if (and mm (= (:v mm) v))
-                      (:node mm)
-                      (let [n (interpret v)]
-                        (reset! memo {:v v :node n})
-                        n)))]
-         (read-node node))))))
-
-(defn- resolve-child [fb child]
-  (let [v (if (rx/rx? child)
-            (if fb
-              (try (rx/? child)
-                   (catch #?(:clj Throwable :cljs :default) e
-                     (if (rx/pending-ex? e) (read-node fb) (throw e))))
-              (rx/? child))
-            child)]
-    v))
+       (try
+         (let [v    (rx/? content)
+               node (let [mm @memo]
+                      (if (and mm (= (:v mm) v))
+                        (:node mm)
+                        (let [n (interpret v fb)]
+                          (reset! memo {:v v :node n})
+                          n)))]
+           (read-node node))
+         (catch #?(:clj Throwable :cljs :default) e
+           (if (rx/pending-ex? e)
+             (read-node fb)
+             (throw e))))))))
 
 (defn- push-child [acc c]
   (if (splice? c) (reduce push-child acc c) (conj acc c)))
@@ -161,33 +168,46 @@
 
 (defn- interpret-fragment
   "[:<> & children] — children splice into the parent, no wrapper."
-  [v]
+  [v fb]
   (let [[_ _ children] (normalize v)
-        kids (mapv interpret children)]
+        kids (mapv #(interpret % fb) children)]
     (if (not-any? rx/rx? kids)
       (with-meta (reduce push-child [] kids) {::splice true})
       (rx/rx*
        (fn []
-         (with-meta (reduce push-child [] (mapv #(resolve-child nil %) kids))
+         (with-meta (reduce push-child [] (mapv read-node kids))
            {::splice true}))))))
 
-(defn- interpret-element [v]
+(defn- interpret-element [v inherited-fb]
   (let [[tag props children] (normalize v)
         fb-form   (:fallback props)
         props     (dissoc props :fallback)
-        fb        (when (some? fb-form) (interpret fb-form))
-        kids      (mapv interpret children)
+        ;; nearest declaration wins; otherwise inherit — the same rule
+        ;; as the DOM consumer's ctx
+        fb        (if (some? fb-form) (interpret fb-form inherited-fb) inherited-fb)
+        kids      (mapv #(interpret % fb) children)
         dyn-props (into {} (filter (comp rx/rx? val)) props)
         stat-props (reduce dissoc props (keys dyn-props))]
-    (if (and (empty? dyn-props) (not-any? rx/rx? kids) (nil? fb))
+    (if (and (empty? dyn-props) (not-any? rx/rx? kids))
       (assemble tag stat-props kids)
       (rx/rx*
        (fn []
-         (let [p (reduce-kv (fn [acc k pv] (assoc acc k (rx/? pv)))
+         (let [p (reduce-kv (fn [acc k pv]
+                              ;; a pending prop is omitted — the DOM
+                              ;; consumer likewise leaves it unset
+                              ;; until the first value
+                              (let [val (try (rx/? pv)
+                                             (catch #?(:clj Throwable :cljs :default) e
+                                               (if (rx/pending-ex? e)
+                                                 ::pending-prop
+                                                 (throw e))))]
+                                (if (= val ::pending-prop)
+                                  acc
+                                  (assoc acc k val))))
                             stat-props dyn-props)]
-           (assemble tag p (mapv #(resolve-child fb %) kids))))))))
+           (assemble tag p (mapv read-node kids))))))))
 
-(defn- interpret-boundary [v]
+(defn- interpret-boundary [v fb]
   (let [[_ props children] (normalize v)
         fallback (or (:fallback props)
                      (fn [err _] [:div {:class "flowdom-error"} (str err)]))
@@ -207,7 +227,7 @@
              node (let [mm @memo]
                     (if (and mm (= (:gen mm) g))
                       (:node mm)
-                      (let [n (interpret child)]
+                      (let [n (interpret child fb)]
                         (reset! memo {:gen g :node n})
                         n)))]
          (try
@@ -219,7 +239,8 @@
                      fb-node (if (and mm (= (:gen mm) g) (identical? (:err mm) e))
                                (:fb mm)
                                (let [n (interpret
-                                        (fallback e (fn retry [] (swap! gen inc))))]
+                                        (fallback e (fn retry [] (swap! gen inc)))
+                                        fb)]
                                  (swap! memo assoc :err e :fb n)
                                  n))]
                  (read-node fb-node))))))))))
@@ -227,12 +248,16 @@
 (defn- read-items [items]
   (if (vector? items) items (rx/? items)))
 
-(defn- interpret-for [{:keys [key-fn items body]}]
+(defn- interpret-for [{:keys [key-fn items body]} fb]
   (let [cache (atom {})]
     (rx/rx*
      (fn []
-       (let [xs (vec (read-items items))
-             ks (mapv key-fn xs)]
+       (let [xs (try (vec (read-items items))
+                     (catch #?(:clj Throwable :cljs :default) e
+                       (if (rx/pending-ex? e) ::pending-items (throw e))))]
+        (if (= xs ::pending-items)
+         (read-node fb)
+         (let [ks (mapv key-fn xs)]
          (when (and (seq ks) (not (apply distinct? ks)))
            (throw (ex-info "flowdom: for-by keys must be distinct" {:keys ks})))
          (let [prev @cache
@@ -244,34 +269,37 @@
                              (assoc acc k e))
                          (let [ia (atom x)]
                            (assoc acc k {:item ia
-                                         :node (interpret (body ia))}))))
+                                         :node (interpret (body ia) fb)}))))
                      {}
                      (map vector ks xs))]
            (reset! cache next)
            (with-meta
              (mapv (fn [k] (read-node (:node (get next k)))) ks)
-             {::splice true})))))))
+             {::splice true})))))))))
 
 (defn interpret
   "Hiccup (with rx values embedded) to a node: a plain value when fully
-  static, otherwise an Rx whose flow carries the assembled subtree."
-  [v]
-  (cond
-    (rx/rx? v)         (slot v)
-    (for-by? v)        (interpret-for v)
-    (component-vec? v) (interpret (apply (first v) (rest v)))
-    (and (element-vec? v) (= :<> (first v))) (interpret-fragment v)
-    ;; portals are a DOM concern; the spine renders content in place
-    ;; under a [:portal] marker (the :mount element is not data — drop it)
-    (and (element-vec? v) (= :portal (first v)))
-    (let [[_ props children] (normalize v)
-          props (dissoc props :mount)]
-      (interpret-element (into (if (seq props) [:portal props] [:portal]) children)))
-    (and (element-vec? v) (= :error-boundary (first v))) (interpret-boundary v)
-    (element-vec? v)   (interpret-element v)
-    (fn? v)            (throw (ex-info "flowdom: bare functions are not valid tree content — components go in vectors [f args], dynamic values in (rx ...)"
-                                       {:got v}))
-    :else v))
+  static, otherwise an Rx whose flow carries the assembled subtree.
+  The 2-arity threads the inherited :fallback node that pending
+  positions render in place (see the ns docstring)."
+  ([v] (interpret v nil))
+  ([v fb]
+   (cond
+     (rx/rx? v)         (slot v fb)
+     (for-by? v)        (interpret-for v fb)
+     (component-vec? v) (interpret (apply (first v) (rest v)) fb)
+     (and (element-vec? v) (= :<> (first v))) (interpret-fragment v fb)
+     ;; portals are a DOM concern; the spine renders content in place
+     ;; under a [:portal] marker (the :mount element is not data — drop it)
+     (and (element-vec? v) (= :portal (first v)))
+     (let [[_ props children] (normalize v)
+           props (dissoc props :mount)]
+       (interpret-element (into (if (seq props) [:portal props] [:portal]) children) fb))
+     (and (element-vec? v) (= :error-boundary (first v))) (interpret-boundary v fb)
+     (element-vec? v)   (interpret-element v fb)
+     (fn? v)            (throw (ex-info "flowdom: bare functions are not valid tree content — components go in vectors [f args], dynamic values in (rx ...)"
+                                        {:got v}))
+     :else v)))
 
 (defn expand
   "Pre-run every statically-reachable component fn in `hiccup`, splicing
@@ -330,9 +358,9 @@
 (defn snapshot
   "One sample of the tree flow: the rendered tree as plain hiccup at
   this instant. Handler fns are preserved in props (call them from
-  tests, then snapshot again). Returns the `flowdom.rx/pending` marker
-  while the root is pending; throws if an uncaught error reached the
-  root. Cross-platform — works on a JVM `render` handle and on a
+  tests, then snapshot again). Pending regions appear as their nearest
+  :fallback, in place — or as nothing without one (see the ns
+  docstring); throws if an uncaught error reached the root. Cross-platform — works on a JVM `render` handle and on a
   browser spine-mode `mount` handle alike."
   [handle]
   (let [node (:tree handle)]
