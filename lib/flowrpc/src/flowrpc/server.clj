@@ -52,6 +52,18 @@
     (s/on-closed out cancel)
     out))
 
+(def default-max-bytes
+  "Default cap on an incoming request's transit size (chars). Bounds
+  parse cost and memory for untrusted input; override per handler with
+  :max-bytes (nil = unlimited)."
+  (* 1 1024 1024))
+
+(def default-max-depth
+  "Default cap on an incoming request's nesting depth. The load-bearing
+  DoS guard — the JSON parser recurses per level. Override with
+  :max-depth (nil = unlimited)."
+  64)
+
 (defn- error-status
   "Response status for a thrown decode/endpoint exception: honors
   :flowrpc/status in ex-data (e.g. a session-rejecting read handler
@@ -79,14 +91,17 @@
      :write-handlers  {type {:tag … :rep …}} — per-request transit
                       write handlers for the outgoing stream"
   ([req] (handle-query req nil))
-  ([req {:keys [read-handlers write-handlers]}]
+  ([req {:keys [read-handlers write-handlers max-bytes max-depth]
+         :or   {max-bytes default-max-bytes max-depth default-max-depth}}]
    (let [qs (get (:query-params req) "q")]
      (if (nil? qs)
        (do (log/error "handle-query: missing q param" {:query-params (:query-params req)})
            {:status 400 :headers {"content-type" "application/json"}
             :body   "{\"error\":\"missing q param\"}"})
        (try
-         (let [{:keys [fn-name args]} (transit/read qs {:handlers read-handlers})
+         (let [{:keys [fn-name args]} (transit/read qs {:handlers   read-handlers
+                                                        :max-bytes  max-bytes
+                                                        :max-depth  max-depth})
                v                      (registry/lookup (str fn-name))]
            (if (nil? v)
              (do (log/error "handle-query: fn not in registry" {:fn-name fn-name})
@@ -133,9 +148,11 @@
 
    Rejects any request not declaring content-type
    application/transit+json with 415 (a CSRF guard — see
-   `transit-content-type?`)."
+   `transit-content-type?`), and over-large / over-deep payloads with
+   413 (DoS guard — :max-bytes / :max-depth, defaulted)."
   ([req] (handle-command req nil))
-  ([req {:keys [read-handlers write-handlers]}]
+  ([req {:keys [read-handlers write-handlers max-bytes max-depth]
+         :or   {max-bytes default-max-bytes max-depth default-max-depth}}]
    (let [wopts {:handlers write-handlers}]
      (if-not (transit-content-type? req)
        {:status  415
@@ -145,7 +162,9 @@
                                 wopts)}
      (try
        (let [body                   (some-> req :body slurp)
-             {:keys [fn-name args]} (transit/read body {:handlers read-handlers})
+             {:keys [fn-name args]} (transit/read body {:handlers   read-handlers
+                                                         :max-bytes  max-bytes
+                                                         :max-depth  max-depth})
              v                      (registry/lookup (str fn-name))]
          (if (nil? v)
            (do (log/error "handle-command: fn not in registry" {:fn-name fn-name})

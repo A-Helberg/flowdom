@@ -137,15 +137,61 @@
               (t/write (t/writer :json {:handlers (write-handler-map handlers)}) data)
               (t/write default-writer data)))))
 
+(defn- json-nesting-depth
+  "Max nesting of [ and { in the transit-json string, brackets inside
+  string literals ignored (escapes respected). An UPPER BOUND on the
+  decoded value's structural depth — computed lexically, so it costs
+  nothing and, crucially, runs BEFORE the parser (transit-java's JSON
+  reader recurses per level, so a deep payload overflows the stack
+  during parse; a post-decode walk would be too late)."
+  [^String s]
+  (let [n (count s)]
+    (loop [i 0, depth 0, mx 0, in-str false, esc false]
+      (if (>= i n)
+        mx
+        (let [c (nth s i)]
+          (cond
+            esc               (recur (inc i) depth mx in-str false)
+            (= c \\)          (recur (inc i) depth mx in-str (and in-str (not esc)))
+            (= c \")          (recur (inc i) depth mx (not in-str) false)
+            in-str            (recur (inc i) depth mx in-str false)
+            (or (= c \[) (= c \{)) (let [d (inc depth)] (recur (inc i) d (max mx d) false false))
+            (or (= c \]) (= c \})) (recur (inc i) (max 0 (dec depth)) mx false false)
+            :else             (recur (inc i) depth mx false false)))))))
+
+(defn- guard-input!
+  "Reject over-large or over-deep transit before it is parsed. Both
+  limits are opt-in (nil = unlimited); flowrpc.server applies safe
+  defaults. A rejection is a 413 via ex-data."
+  [s max-bytes max-depth]
+  (when (string? s)
+    (when (and max-bytes (> (count s) max-bytes))
+      (throw (ex-info "flowrpc: request payload too large"
+                      {:flowrpc/status 413 :max-bytes max-bytes :size (count s)})))
+    (when (and max-depth (> (json-nesting-depth s) max-depth))
+      (throw (ex-info "flowrpc: request payload nested too deep"
+                      {:flowrpc/status 413 :max-depth max-depth}))))
+  s)
+
 (defn read
   "Decode `s`. Opts:
-    :handlers  {tag (fn [rep] …)} — read handlers for this call,
-               reconstructing values from tokens. Supply them at the
-               rpc mount point, closing over the request when
-               reconstruction needs it. Tags without a handler read
-               as generic tokens."
+    :handlers   {tag (fn [rep] …)} — read handlers for this call,
+                reconstructing values from tokens. Supply them at the
+                rpc mount point, closing over the request when
+                reconstruction needs it. Tags without a handler read
+                as generic tokens.
+    :max-bytes  reject a string input longer than this before parsing
+                (nil = unlimited). A DoS guard for untrusted input.
+    :max-depth  reject a string input whose bracket-nesting exceeds
+                this before parsing (nil = unlimited) — the important
+                one, since the JSON parser recurses per level.
+
+  flowrpc.server applies safe defaults to both limits for incoming
+  requests; client-side decoding of trusted server data leaves them
+  off. See `guard-input!`."
   ([s] (read s nil))
-  ([s {:keys [handlers]}]
+  ([s {:keys [handlers max-bytes max-depth]}]
+   (guard-input! s max-bytes max-depth)
    #?(:clj  (t/read (t/reader (if (string? s)
                                 (ByteArrayInputStream. (.getBytes ^String s "UTF-8"))
                                 s)

@@ -345,3 +345,65 @@
     (d)                ;; …then the whole app is disposed first
     ((first @flushes)) ;; must be a no-op, not an error
     (is (= "" (.-textContent el)))))
+
+;; ---------------------------------------------------------------------------
+;; DOM surface: property policy, custom elements, listener options, IME
+
+(deftest property-only-props-set-as-properties
+  (let [el (container)
+        _  (dom/mount [:input {:type "checkbox" :indeterminate true}] el)
+        cb (.querySelector el "input")]
+    (is (true? (.-indeterminate cb)) "indeterminate reflected as a property")
+    (is (nil? (.getAttribute cb "indeterminate")) "and NOT as an attribute")))
+
+(deftest custom-elements-get-object-props-as-properties
+  (let [el   (container)
+        data #js {:a 1}
+        _    (dom/mount [:my-widget {:data data :label "hi"}] el)
+        w    (.querySelector el "my-widget")]
+    (is (identical? data (.-data w)) "object value set as a property, not stringified")
+    (is (false? (.hasAttribute w "data")) "no attribute for the object prop")
+    (is (= "hi" (.getAttribute w "label")) "string props remain attributes (CSS-selectable)")))
+
+(deftest handler-options-map-once
+  (let [el   (container)
+        hits (atom 0)
+        _    (dom/mount [:button {:on-click {:handler (fn [_] (swap! hits inc))
+                                             :once    true}} "x"] el)
+        btn  (.querySelector el "button")]
+    (.click btn)
+    (.click btn)
+    (is (= 1 @hits) ":once detached the listener after the first event")))
+
+(deftest reactive-handler-options-map
+  (let [el   (container)
+        mode (atom :a)
+        hits (atom [])
+        _    (dom/mount [:button {:on-click (rx (let [m (? mode)]
+                                                  {:handler (fn [_] (swap! hits conj m))
+                                                   :passive true}))}
+                        "x"] el)
+        btn  (.querySelector el "button")]
+    (.click btn)
+    (reset! mode :b)
+    (.click btn)
+    (is (= [:a :b] @hits) "options-map listener swaps and detaches correctly")))
+
+(deftest reactive-value-defers-writes-during-ime-composition
+  (let [el    (container)
+        text  (atom "a")
+        _     (dom/mount [:input {:value (rx (? text))}] el)
+        input (.querySelector el "input")
+        comp  (fn [type]
+                (let [ctor (.. input -ownerDocument -defaultView -CompositionEvent)]
+                  (.dispatchEvent input (new ctor type))))]
+    (is (= "a" (.-value input)))
+    (comp "compositionstart")
+    (reset! text "b")   ;; rx emits mid-composition — must NOT be written back
+    (is (= "a" (.-value input)) "value left alone while the IME is composing")
+    (reset! text "c")   ;; latest wins
+    (is (= "a" (.-value input)))
+    (comp "compositionend")
+    (is (= "c" (.-value input)) "the latest pending value applies on compositionend")
+    (reset! text "d")   ;; back to normal after composition ends
+    (is (= "d" (.-value input)) "writes resume once composition is over")))

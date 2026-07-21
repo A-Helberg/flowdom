@@ -75,6 +75,48 @@
      (defn- event-name [k]
        (-> (name k) (subs 2) (str/replace #"^-" "") str/lower-case))
 
+     (defn- handler-spec
+       "A handler prop value is a fn, or a map
+  {:handler f :capture b :passive b :once b} to pass listener options.
+  Returns [f options-js-or-false] — the options are also used for
+  removeEventListener (capture must match to detach)."
+       [v]
+       (if (map? v)
+         [(:handler v) #js {:capture (boolean (:capture v))
+                            :passive (boolean (:passive v))
+                            :once    (boolean (:once v))}]
+         [v false]))
+
+     ;; Keys whose DOM PROPERTY is authoritative and whose attribute
+     ;; either doesn't exist (:indeterminate) or stops reflecting after
+     ;; user interaction (:value/:checked). Everything else is an
+     ;; attribute — except custom-element props (see use-property?).
+     (def ^:private property-keys
+       #{:value :checked :selected :indeterminate :muted :volume})
+
+     (defn- custom-element? [el]
+       (let [ln (.-localName el)]
+         (boolean (and ln (str/includes? ln "-")))))
+
+     (defn- attr-value?
+       "A value an HTML attribute can actually hold: string, number,
+  boolean, nil. Anything else (a map, a JS object, a fn) can only
+  live as a property."
+       [v]
+       (or (string? v) (number? v) (boolean? v) (nil? v)))
+
+     (defn- use-property?
+       "Set k as a JS property rather than an attribute? Always for the
+  known property-keys. For a custom element, whenever the property
+  already exists on it OR the value is non-attribute data — so rich
+  props reach web components unstringified, even before the element
+  upgrades and defines the property."
+       [el k v]
+       (or (contains? property-keys k)
+           (and (custom-element? el)
+                (or (js/Reflect.has el (name k))
+                    (not (attr-value? v))))))
+
      (defn- set-prop! [el k v]
        (cond
          (= k :class)
@@ -90,7 +132,7 @@
            (doseq [[sk sv] v] (.setProperty (.-style el) (name sk) (str sv)))
            (.setAttribute el "style" (str v)))
 
-         (or (= k :value) (= k :checked))
+         (use-property? el k v)
          (aset el (name k) v)
 
          (or (nil? v) (false? v))
@@ -202,32 +244,62 @@
 ;; ---------------------------------------------------------------------------
 ;; elements
 
+     (defn- spawn-value!
+       "A reactive :value on a text field, made IME-safe. While an input
+  method is composing (CJK, dead keys), writing .value back cancels
+  the in-progress candidate and jumps the caret — so defer writes
+  until compositionend, then apply the latest. Listeners ride the
+  element and die with it, like static handlers."
+       [el pv ctx]
+       (let [composing (volatile! false)
+             pending   (volatile! ::none)]
+         (.addEventListener el "compositionstart"
+                            (fn [_] (vreset! composing true)))
+         (.addEventListener el "compositionend"
+                            (fn [_]
+                              (vreset! composing false)
+                              (when-not (= ::none @pending)
+                                (set-prop! el :value @pending)
+                                (vreset! pending ::none))))
+         (spawn! ctx pv
+                 (fn [v]
+                   (cond
+                     (rx/pending-value? v) nil
+                     (rx/err? v)           (report-error! ctx (:error v))
+                     @composing            (vreset! pending v)
+                     :else                 (set-prop! el :value v)))
+                 (fn [e] (report-error! ctx e)))))
+
      (defn- spawn-prop! [el k pv ctx]
-       (spawn! ctx pv
-               (fn [v]
-                 (cond
-                   (rx/pending-value? v) nil
-                   (rx/err? v)           (report-error! ctx (:error v))
-                   :else                 (set-prop! el k v)))
-               (fn [e] (report-error! ctx e))))
+       (if (= k :value)
+         (spawn-value! el pv ctx)
+         (spawn! ctx pv
+                 (fn [v]
+                   (cond
+                     (rx/pending-value? v) nil
+                     (rx/err? v)           (report-error! ctx (:error v))
+                     :else                 (set-prop! el k v)))
+                 (fn [e] (report-error! ctx e)))))
 
      (defn- spawn-handler!
-       "An rx-valued :on* prop: the CURRENT emission is the listener.
-  Each change swaps the listener; pending means no listener yet; nil
-  emissions detach."
+       "An rx-valued :on* prop: the CURRENT emission is the listener
+  (a fn, or a {:handler … :capture … :passive … :once …} spec). Each
+  change swaps the listener; pending means no listener yet; nil
+  detaches."
        [el k pv ctx]
        (let [ev      (event-name k)
-             current (volatile! nil)]
+             current (volatile! nil)] ;; [f opts] currently attached
          (spawn! ctx pv
                  (fn [v]
                    (cond
                      (rx/pending-value? v) nil
                      (rx/err? v)           (report-error! ctx (:error v))
                      :else
-                     (do (when-let [old @current]
-                           (.removeEventListener el ev old))
-                         (vreset! current v)
-                         (when v (.addEventListener el ev v)))))
+                     (do (when-let [[old opts] @current]
+                           (.removeEventListener el ev old opts))
+                         (let [[f opts] (handler-spec v)]
+                           (vreset! current (when f [f opts]))
+                           (when f (.addEventListener el ev f opts))))))
                  (fn [e] (report-error! ctx e)))))
 
      (def ^:private svg-ns "http://www.w3.org/2000/svg")
@@ -251,7 +323,8 @@
            (cond
              (handler-key? k) (if (rx/rx? pv)
                                 (.push ds (spawn-handler! el k pv ctx))
-                                (.addEventListener el (event-name k) pv))
+                                (let [[f opts] (handler-spec pv)]
+                                  (when f (.addEventListener el (event-name k) f opts))))
              (rx/rx? pv)      (.push ds (spawn-prop! el k pv ctx))
              :else            (set-prop! el k pv)))
          (.push ds (mount-children el nil ctx children))
