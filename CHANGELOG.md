@@ -28,6 +28,9 @@ entries below track the work leading to `0.0.1`.
   and JVM consumers.
 - Churn detection + a runaway circuit-breaker for the
   flow-built-inside-an-rx footgun.
+- `flowdom.rx/hold` — share a cold flow as an rx: N readers over one
+  subscription (one SSE connection for a flowrpc query), pending until
+  the first value, optional immediate `initial`.
 
 ### flowrpc
 - Client ported to flowdom: a query is a cold missionary flow read
@@ -36,6 +39,11 @@ entries below track the work leading to `0.0.1`.
 - Errors (server exception, decode failure, closed EventSource) fail
   the query flow to the nearest `:error-boundary` instead of only
   logging.
+- `flowrpc.client/unresolved` — sentinel for followed refs whose value
+  isn't known yet (≠ nil = resolved to nothing): while a followed ref
+  holds it the query emits nothing, so loading holds and a query whose
+  argument derives from another query's answer is never asked at its
+  initial value.
 - Security: `handle-command` requires `application/transit+json`
   (CSRF); `handle-query` / `handle-command` reject over-large /
   over-deep payloads with 413 before parsing (`:max-bytes` /

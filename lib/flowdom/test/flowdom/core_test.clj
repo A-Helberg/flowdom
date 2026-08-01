@@ -378,6 +378,37 @@
       (is (= 2 @runs) "a remount is a fresh run"))))
 
 ;; ---------------------------------------------------------------------------
+;; hold: share a cold flow, pending until its first value
+
+(deftest hold-shares-one-subscription
+  (let [subs (atom 0)
+        src  (m/observe (fn [emit!]
+                          (swap! subs inc)
+                          (emit! 7)
+                          (fn [] (swap! subs dec))))
+        h    (rx/hold src)]
+    (with-render [t [:div [:span (rx (? h))] [:span (rx (* 2 (? h)))]]]
+      (is (= [:div [:span 7] [:span 14]] (snapshot t)))
+      (is (= 1 @subs) "two readers, one subscription"))
+    (is (= 0 @subs) "last reader leaving tears it down")))
+
+(deftest hold-is-pending-until-the-first-value
+  (let [dv (m/dfv)
+        h  (rx/hold (m/ap (m/? dv)))]
+    (with-render [t [:div {:fallback [:em "loading"]} (rx [:p (? h)])]]
+      (is (= [:div [:em "loading"]] (snapshot t)))
+      (dv "ann")
+      (is (= [:div [:p "ann"]] (snapshot t))))))
+
+(deftest hold-initial-preempts-pending
+  (let [dv (m/dfv)
+        h  (rx/hold (m/ap (m/? dv)) [])]
+    (with-render [t [:div {:fallback [:em "loading"]} (rx [:p (count (? h))])]]
+      (is (= [:div [:p 0]] (snapshot t)) "initial renders immediately")
+      (dv ["a" "b"])
+      (is (= [:div [:p 2]] (snapshot t))))))
+
+;; ---------------------------------------------------------------------------
 ;; churn detection: the build-a-flow-inside-the-body footgun
 
 (deftest building-a-flow-inside-the-body-warns-and-trips-the-breaker

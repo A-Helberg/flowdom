@@ -59,6 +59,33 @@
     (is (= 1 (count @starts)) "resetting to an equal value does not reconnect")
     (cancel!)))
 
+(deftest unresolved-refs-keep-the-query-silent
+  (let [sel    (atom stream/unresolved)
+        starts (atom [])
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args ["x" sel]
+                                                    (fn [vs] (swap! starts conj vs) (forever vs))))]
+    (is (= [] @seen) "nothing emitted while unresolved")
+    (is (= [] @starts) "make-flow never called — no connection, no wrong question")
+    (reset! sel "id-1")
+    (is (= [["x" "id-1"]] @seen) "resolution starts the flow")
+    (is (= [["x" "id-1"]] @starts))
+    (cancel!)))
+
+(deftest back-to-unresolved-cancels-the-inner-flow
+  (let [sel     (atom "a")
+        stopped (atom 0)
+        {:keys [cancel!]} (consume!
+                           (stream/follow-args [sel]
+                                               (fn [_vs]
+                                                 (m/observe (fn [emit!]
+                                                              (emit! :v)
+                                                              (fn [] (swap! stopped inc)))))))]
+    (is (= 0 @stopped))
+    (reset! sel stream/unresolved)
+    (is (= 1 @stopped) "flipping back to unresolved tore down the connection")
+    (cancel!)))
+
 (deftest cancelling-the-consumer-stops-the-inner-flow
   (let [room    (atom "a")
         stopped (atom 0)
@@ -80,18 +107,18 @@
   ;; failed flow instead of a silent console line and a hung UI. The
   ;; events arrive in separate turns, like real SSE events do.
   (async done
-    (let [seen (atom [])
-          flow (m/eduction (stream/diff-xf)
-                           (m/ap (m/amb [:full ["a"]]
-                                        (do (m/? (m/sleep 5))
-                                            [:exception {:message "boom"}]))))]
-      ((m/reduce (fn [_ v] (swap! seen conj v) nil) nil flow)
-       (fn [_] (is false "flow completed instead of failing") (done))
-       (fn [e]
-         (is (= [["a"]] @seen) "values before the exception emitted")
-         (is (= {:message "boom"} (:flowrpc/error (ex-data e)))
-             "the server's payload rides the error")
-         (done))))))
+         (let [seen (atom [])
+               flow (m/eduction (stream/diff-xf)
+                                (m/ap (m/amb [:full ["a"]]
+                                             (do (m/? (m/sleep 5))
+                                                 [:exception {:message "boom"}]))))]
+           ((m/reduce (fn [_ v] (swap! seen conj v) nil) nil flow)
+            (fn [_] (is false "flow completed instead of failing") (done))
+            (fn [e]
+              (is (= [["a"]] @seen) "values before the exception emitted")
+              (is (= {:message "boom"} (:flowrpc/error (ex-data e)))
+                  "the server's payload rides the error")
+              (done))))))
 
 (deftest patches-reconstruct-and-bad-patches-do-not-emit
   (let [seen (atom [])

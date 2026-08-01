@@ -329,3 +329,19 @@
       [:p (effect heartbeat) \"❤ beating…\"]"
   [flow]
   (rx* (fn [] (? flow) nil)))
+
+(defn hold
+  "Share a cold flow as an rx: any number of readers `?` the hold over
+  ONE subscription (for a flowrpc query, one SSE connection), and the
+  last reader leaving tears it down. Pending until the flow's first
+  value — the nearest `:fallback` renders — so definitive states only
+  appear once the source has actually answered; pass `initial` only
+  when an immediate value is the right semantics. Build once (ns level
+  or component body), never inside an rx body — a rebuilt hold is a
+  fresh subscription:
+
+      (def projects (hold (rpc/list-projects)))"
+  ([flow] (rx* (fn [] (? flow))))
+  ([flow initial]
+   (let [src (m/ap (m/amb initial (m/?> (unwrap flow))))]
+     (rx* (fn [] (? src))))))
