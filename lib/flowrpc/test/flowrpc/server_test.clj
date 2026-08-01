@@ -17,7 +17,8 @@
   {:query-params {"q" (transit/write {:fn-name fn-sym :args (vec args)})}})
 
 (defn command-req [fn-sym & args]
-  {:body (java.io.StringReader. (transit/write {:fn-name fn-sym :args (vec args)}))})
+  {:headers {"content-type" "application/transit+json"} ;; CSRF check 415s others
+   :body    (java.io.StringReader. (transit/write {:fn-name fn-sym :args (vec args)}))})
 
 ;; ---------------------------------------------------------------------------
 ;; handle-query
