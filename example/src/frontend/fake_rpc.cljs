@@ -20,6 +20,7 @@
 
 (def ^:private queries
   {'chat/messages      (fn [db] (:messages db))
+   'chat/rooms         (fn [db] (vec (keys (:rooms db))))
    'chat/room-messages (fn [db room] (get-in db [:rooms room]))})
 
 (def ^:private commands
@@ -27,6 +28,26 @@
                     (cond-> db (seq text) (update :messages conj text)))
    'chat/send-to! (fn [db room text]
                     (cond-> db (seq text) (update-in [:rooms room] conj text)))})
+
+(def unresolved
+  "Re-export of flowrpc's sentinel (the real thing, like follow-args):
+  a followed ref holding it keeps the query silent."
+  stream/unresolved)
+
+;; How many query flows are running right now — what a server would
+;; count as open SSE streams. The hold demo displays it.
+(defonce open-connections (atom 0))
+
+(defn- counted
+  "Wrap a query flow so its lifetime moves `open-connections` — the
+  m/observe bracket increments at spawn and decrements exactly once
+  at cancel, like the tx-listener's acquire/release."
+  [flow]
+  (m/ap (let [_ (m/?> (m/observe (fn [emit!]
+                                   (swap! open-connections inc)
+                                   (emit! nil)
+                                   (fn [] (swap! open-connections dec)))))]
+          (m/?> flow))))
 
 (defn- run-query [f args]
   (m/eduction (dedupe)
@@ -39,7 +60,7 @@
   follow-args."
   [fn-id & args]
   (let [f (queries fn-id)]
-    (stream/follow-args (vec args) #(run-query f %))))
+    (stream/follow-args (vec args) #(counted (run-query f %)))))
 
 (defn command
   "Symbol + args → promise, like flowrpc's command."

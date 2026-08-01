@@ -37,7 +37,7 @@ guide.
 
 | ns | what |
 |----|------|
-| `flowdom.rx` | the kernel: `rx` / `rx*`, the universal read `?`, `effect` (run a flow for its side effects, lifetime = subscription) |
+| `flowdom.rx` | the kernel: `rx` / `rx*`, the universal read `?`, `effect` (run a flow for its side effects, lifetime = subscription), `hold` (share a cold flow: any number of readers, one subscription, pending until the first value) |
 | `flowdom.core` | the interpreter — hiccup+rx → a value tree — and its JVM consumers: `render`, `snapshot`, `await`, `with-render`, `for-by`, `expand` |
 | `flowdom.dom` | the browser consumer: `mount` (CLJS only) |
 | `flowdom.react` | render React components in the tree (`component`, `el`) — needs `react` + `react-dom` as peer deps |

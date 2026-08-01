@@ -134,7 +134,9 @@ The api namespace colocates the pure fn with its `<`-suffixed facade, registered
         (fn [note] [:li (rx (:text (? note)))]))]
 ```
 
-Calling a read runs nothing — a query is a cold flow, a recipe. No connection opens until an `rx` reads it; the last reader leaving closes it. Read one query through one `rx` to share a single connection across several readers. Flow-returning endpoints are adapted to SSE automatically by `flowrpc.server/handle-query`.
+Calling a read runs nothing — a query is a cold flow, a recipe. No connection opens until an `rx` reads it; the last reader leaving closes it. To share a single connection across several readers, wrap the query in `flowdom.rx/hold` (a shared rx) and read the hold everywhere. Flow-returning endpoints are adapted to SSE automatically by `flowrpc.server/handle-query`.
+
+Query args may be watchable refs: the query **follows** them, reconnecting when a value changes (equal values dedup). A selection whose value derives from another query's answer should start as `flowrpc.client/unresolved` — distinct from nil (resolved to nothing) — because while a followed ref holds the sentinel the query emits nothing: loading states hold, and the query is never asked at the ref's initial value.
 
 ### Properties
 

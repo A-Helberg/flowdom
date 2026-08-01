@@ -8,6 +8,9 @@
 (defn messages []
   (rpc/query 'chat/messages))
 
+(defn rooms []
+  (rpc/query 'chat/rooms))
+
 (defn send! [text]
   (rpc/command 'chat/send! text))
 

@@ -33,6 +33,7 @@
             [frontend.examples.missionary-spawn :as missionary-spawn]
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
+            [frontend.examples.rpc-hold :as rpc-hold]
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-by-hand :as live-by-hand]
             [frontend.examples.live-notes :as live-notes]))
@@ -477,7 +478,14 @@
         "it: visit another page and come back, and the counter restarts "
         "from zero even though the flow is a " [:code "def"] ". A flow "
         "nobody renders costs nothing, and a flow nobody watches anymore "
-        "is cancelled, not leaked."]]
+        "is cancelled, not leaked."]
+       [:p "One consequence to keep in mind: each " [:code "?"] " cell "
+        "is its own subscription, so two rx blocks reading this flow "
+        "directly would be two independent timers. When many readers "
+        "should share one running flow, wrap it once in "
+        [:code "flowdom.rx/hold"] " and read the hold everywhere — the "
+        "flowrpc section makes the difference visible with a "
+        "connection counter."]]
       :examples
       [{:source    (rc/inline "frontend/examples/missionary_hold.cljs")
         :component missionary-hold/example}]}
@@ -660,6 +668,18 @@
         "where the code sits. There is no wire-name string to keep "
         "in sync, and renaming the function renames the endpoint "
         "with it."]
+       [:h2 "Reactive arguments"]
+       [:p "Query args may be watchable refs (any atom-like): the "
+        "query " [:strong "follows"] " them — a changed value closes "
+        "the running connection and opens one for the new args, equal "
+        "values dedup. And a selection that isn't known yet — because "
+        "it derives from another query's answer — starts as "
+        [:code "rpc/unresolved"] ", distinct from nil (resolved to "
+        "nothing): while a followed ref holds the sentinel the query "
+        "emits " [:em "nothing"] ", so loading states hold and the "
+        "query is never asked at the ref's initial value. That is "
+        "what kills the loading → wrong-answer flash. The rooms demo "
+        "below starts unresolved: nothing connects until you pick."]
        [:p "This site is static — there is no server. The demos run "
         "on browser stand-ins behind the real names (on later pages "
         "even " [:code "datomic.api"] " resolves to one), and the "
@@ -668,9 +688,41 @@
       [{:title     "A query and a command"
         :source    (rc/inline "frontend/examples/rpc_chat.cljs")
         :component rpc-chat/example}
-       {:title     "Reactive arguments — switching rooms"
+       {:title     "Reactive arguments — unresolved, then switching rooms"
         :source    (rc/inline "frontend/examples/rpc_rooms.cljs")
         :component rpc-rooms/example}]}
+
+     {:id    :rpc-hold
+      :title "Sharing a query — hold"
+      :prose
+      [:<>
+       [:p "A query flow is cold: every " [:code "?"] " cell that "
+        "reads it opens its own connection. Usually that is exactly "
+        "right — mount is connect, unmount is disconnect — but when "
+        "several parts of the UI want the same answer, per-reader "
+        "connections are waste."]
+       [:p [:code "flowdom.rx/hold"] " wraps the flow once. An rx is "
+        [:code "m/signal"] "-shared, so any number of readers "
+        [:code "?"] " the hold over " [:em "one"] " subscription — one "
+        "connection — and the last reader leaving closes it. The hold "
+        "is pending until the query's first answer, so the nearest "
+        [:code ":fallback"] " renders and definitive states (\"no "
+        "messages yet\") only appear once the server has actually "
+        "answered; " [:code "(hold q initial)"] " starts from "
+        [:code "initial"] " instead, for when an immediate value is "
+        "the right semantics."]
+       [:p "Build the hold once — at the ns level or in a component "
+        "body — never inside an rx body: an rx re-run rebuilds "
+        "whatever it constructs, and a rebuilt hold is a fresh "
+        "connection (dev mode warns about this churn)."]
+       [:p "The demo's counter is real: the fake backend counts "
+        "running query flows the way a server counts open SSE "
+        "streams. Flip between the two wirings — both panels show "
+        "the same messages either way; what changes is how many "
+        "connections carry them."]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/rpc_hold.cljs")
+        :component rpc-hold/example}]}
 
      {:id    :datomic-txes
       :title "A Datomic tx-listener"
