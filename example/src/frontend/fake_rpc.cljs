@@ -34,6 +34,16 @@
   a followed ref holding it keeps the query silent."
   stream/unresolved)
 
+(def loading-visible
+  "Re-export of flowrpc's sentinel: include it in a query's args to
+  surface refetches as loading — real follow-args, real behavior."
+  stream/loading-visible)
+
+(def loading-value
+  "Re-export of flowrpc's placeholder wrapper: (loading-value x) in a
+  query's args emits `x` once, before the query's first answer."
+  stream/loading-value)
+
 ;; How many query flows are running right now — what a server would
 ;; count as open SSE streams. The hold demo displays it.
 (defonce open-connections (atom 0))

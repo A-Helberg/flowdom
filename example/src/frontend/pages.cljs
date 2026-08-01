@@ -34,6 +34,7 @@
             [frontend.examples.rpc-chat :as rpc-chat]
             [frontend.examples.rpc-rooms :as rpc-rooms]
             [frontend.examples.rpc-hold :as rpc-hold]
+            [frontend.examples.rpc-states :as rpc-states]
             [frontend.examples.datomic-txes :as datomic-txes]
             [frontend.examples.live-by-hand :as live-by-hand]
             [frontend.examples.live-notes :as live-notes]))
@@ -704,13 +705,15 @@
        [:p [:code "flowdom.rx/hold"] " wraps the flow once. An rx is "
         [:code "m/signal"] "-shared, so any number of readers "
         [:code "?"] " the hold over " [:em "one"] " subscription — one "
-        "connection — and the last reader leaving closes it. The hold "
-        "is pending until the query's first answer, so the nearest "
-        [:code ":fallback"] " renders and definitive states (\"no "
-        "messages yet\") only appear once the server has actually "
-        "answered; " [:code "(hold q initial)"] " starts from "
-        [:code "initial"] " instead, for when an immediate value is "
-        "the right semantics."]
+        "connection — and the last reader leaving closes it. A hold "
+        "is " [:em "only"] " the shared subscription: readers see "
+        "whatever the source emits, so it is pending until the "
+        "query's first answer — the nearest " [:code ":fallback"]
+        " renders, and definitive states (\"no messages yet\") only "
+        "appear once the server has actually answered. Wanting a "
+        "placeholder instead is the " [:em "query's"] " business, "
+        "not the hold's — " [:code "loading-value"] ", on the next "
+        "page."]
        [:p "Build the hold once — at the ns level or in a component "
         "body — never inside an rx body: an rx re-run rebuilds "
         "whatever it constructs, and a rebuilt hold is a fresh "
@@ -723,6 +726,66 @@
       :examples
       [{:source    (rc/inline "frontend/examples/rpc_hold.cljs")
         :component rpc-hold/example}]}
+
+     {:id    :rpc-states
+      :title "Query states — loading?< and friends"
+      :prose
+      [:<>
+       [:p "A flow encodes its states positionally in missionary's "
+        "protocol: subscribed-but-silent, emitting, failed. flowdom "
+        "reads two of them out-of-band — pending renders the nearest "
+        [:code ":fallback"] ", an error reaches the nearest "
+        [:code ":error-boundary"] " — and usually that declarative "
+        "pair is all you need. Sometimes you want the state "
+        [:em "inline"] " instead: a spinner beside content that stays "
+        "up, a submit button disabled until the data is in, an error "
+        "message rendered in place."]
+       [:p "Three combinators in " [:code "flowdom.rx"] " lift the "
+        "states into ordinary flows — real missionary flows, built "
+        "once like any other and read with " [:code "?"] ": "
+        [:code "loading?<"] " is booleans, true while the source has "
+        "no value yet; " [:code "error?<"] " is booleans, true while "
+        "it is failed; " [:code "error<"] " carries the error itself, "
+        "nil while healthy. They subscribe their source, so derive "
+        "them from a hold to share its one connection. Check the "
+        "error " [:em "before"] " reading the value — a failed "
+        "source's value read still re-throws to the boundary."]
+       [:h2 "Making the refetch visible"]
+       [:p "A followed query reconnects when its ref changes, but "
+        "readers can't see that: the flow is simply silent until the "
+        "new answer arrives, and silence between emissions is the "
+        "normal state of every flow. So the default is stale-while-"
+        "refetching — the rooms demo relied on it. When the stale "
+        "answer would read as the answer to the " [:em "new"]
+        " question, opt the query in: the " [:code "loading-visible"]
+        " sentinel, anywhere among its args, makes each (re)connect "
+        "emit the pending marker before the answer — the switch and "
+        "the signal are the same event, nothing to keep in sync. "
+        [:code "unresolved"] " refs still emit nothing: 'not asked "
+        "yet' is not 'loading'."]
+       [:p "Its sibling " [:code "(loading-value x)"] " governs a "
+        [:em "different"] " moment: what precedes the query's "
+        [:em "first answer ever"] ". The mount renders " [:code "x"]
+        " immediately instead of pending — and that's all it does: a "
+        "refetch never re-emits the placeholder (a live canvas seeds "
+        "once; it doesn't flash blank every reconnect). The two "
+        "compose — placeholder initially, loading marker on "
+        "refetches — and independently: neither, either, or both. A "
+        "placeholder spends the initial loading state — readers "
+        "can't tell " [:code "x"] " from an answer — so pass one "
+        "only when an immediate value is the right semantics."]
+       [:p "The marker itself — the keyword "
+        [:code ":flowdom.rx/pending"] ", public as "
+        [:code "flowdom.rx/pending"] " — is a protocol, not flowrpc "
+        "magic: " [:em "any"] " flow may emit it to say 'no value "
+        "right now', and every reader treats it like initial "
+        "silence — " [:code "?"] " propagates pending, the nearest "
+        [:code ":fallback"] " renders, " [:code "loading?<"] " reads "
+        "true — until the flow's next emission. A hand-rolled "
+        "websocket flow gets refetch visibility the same way."]]
+      :examples
+      [{:source    (rc/inline "frontend/examples/rpc_states.cljs")
+        :component rpc-states/example}]}
 
      {:id    :datomic-txes
       :title "A Datomic tx-listener"

@@ -101,6 +101,95 @@
     (cancel!)
     (is (= 2 @stopped) "consumer cancellation tore down the current connection")))
 
+(deftest loading-visible-emits-the-pending-marker-on-each-connect
+  (let [room   (atom "general")
+        starts (atom [])
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args ["x" room stream/loading-visible]
+                                                    (fn [vs] (swap! starts conj vs) (forever vs))))]
+    (is (= [:flowdom.rx/pending ["x" "general"]] @seen)
+        "marker precedes the first answer")
+    (is (= [["x" "general"]] @starts)
+        "the sentinel is filtered — make-flow never sees it")
+    (reset! room "random")
+    (is (= [:flowdom.rx/pending ["x" "general"] :flowdom.rx/pending ["x" "random"]] @seen)
+        "the switch and the marker are the same event")
+    (cancel!)))
+
+(deftest loading-visible-keeps-unresolved-silent
+  ;; 'not asked yet' is not 'loading' — the sentinel must not defeat
+  ;; the no-wrong-question guarantee
+  (let [sel (atom stream/unresolved)
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args [sel stream/loading-visible]
+                                                    (fn [vs] (forever vs))))]
+    (is (= [] @seen) "nothing emitted while unresolved, marker included")
+    (reset! sel "id-1")
+    (is (= [:flowdom.rx/pending ["id-1"]] @seen))
+    (cancel!)))
+
+(deftest loading-visible-without-refs-marks-the-one-connect
+  (let [made (atom [])
+        {:keys [seen]} (consume!
+                        (stream/follow-args [1 stream/loading-visible]
+                                            (fn [vs] (swap! made conj vs) (m/seed [vs]))))]
+    (is (= [[1]] @made) "sentinel filtered on the plain path too")
+    (is (= [:flowdom.rx/pending [1]] @seen)
+        "the plain path has one connect — it emits the marker first")))
+
+(deftest loading-value-seeds-the-first-connect-only
+  (let [room   (atom "general")
+        starts (atom [])
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args [room (stream/loading-value [])]
+                                                    (fn [vs] (swap! starts conj vs) (forever vs))))]
+    (is (= [[] ["general"]] @seen) "placeholder precedes the first answer")
+    (is (= [["general"]] @starts) "the wrapper is filtered — make-flow never sees it")
+    (reset! room "random")
+    (is (= [[] ["general"] ["random"]] @seen)
+        "a refetch does NOT re-emit the placeholder — stale holds")
+    (cancel!)))
+
+(deftest loading-value-composes-with-loading-visible
+  ;; two different moments: the placeholder precedes the first answer
+  ;; ever (preempting the marker), the marker precedes every refetch
+  (let [room (atom "general")
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args [room
+                                                     stream/loading-visible
+                                                     (stream/loading-value :blank)]
+                                                    (fn [vs] (forever vs))))]
+    (is (= [:blank ["general"]] @seen)
+        "first connect: placeholder, no marker")
+    (reset! room "random")
+    (is (= [:blank ["general"] :flowdom.rx/pending ["random"]] @seen)
+        "refetch: marker, no placeholder")
+    (cancel!)))
+
+(deftest loading-value-keeps-unresolved-silent
+  (let [sel (atom stream/unresolved)
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args [sel (stream/loading-value :empty)]
+                                                    (fn [vs] (forever vs))))]
+    (is (= [] @seen) "nothing emitted while unresolved, placeholder included")
+    (reset! sel "id-1")
+    (is (= [:empty ["id-1"]] @seen))
+    (cancel!)))
+
+(deftest equal-values-do-not-restart-or-flash
+  ;; = dedup means no reconnect — and with loading-visible, no marker
+  ;; either: nothing to wait for, nothing to announce
+  (let [room   (atom "general")
+        starts (atom [])
+        {:keys [seen cancel!]} (consume!
+                                (stream/follow-args [room stream/loading-visible]
+                                                    (fn [vs] (swap! starts conj vs) (forever vs))))]
+    (is (= [:flowdom.rx/pending ["general"]] @seen))
+    (reset! room "general")
+    (is (= 1 (count @starts)))
+    (is (= [:flowdom.rx/pending ["general"]] @seen) "no reconnect, no marker")
+    (cancel!)))
+
 (deftest exception-events-fail-the-flow
   ;; diff-xf is the seam: an [:exception data] event throws, which
   ;; fails the eduction — the reader (an rx, an error boundary) sees a

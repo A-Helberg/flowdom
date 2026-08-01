@@ -27,13 +27,22 @@
   synchronously on the emitting thread. In CLJS everything is
   single-threaded and synchronous."
   #?(:cljs (:require-macros [flowdom.rx]))
-  (:require [missionary.core :as m]))
+  (:require [missionary.core :as m])
+  (:import (missionary Cancelled)))
 
 ;; ---------------------------------------------------------------------------
 ;; markers
 
 (def pending
-  "Value an rx emits while one of its dependencies has no value yet."
+  "Value an rx emits while one of its dependencies has no value yet.
+
+  Also a public protocol: ANY flow may emit this marker (the keyword
+  :flowdom.rx/pending) to signal 'no value right now'. A reader
+  treats it exactly like initial silence — `?` propagates pending,
+  the nearest :fallback renders, `loading?<` reads true — until the
+  flow's next emission. flowrpc uses it to make refetches visible
+  (the `loading-visible` sentinel); hand-rolled flows may emit it the
+  same way."
   ::pending)
 
 ;; = not identical?: CLJS dev builds don't intern keyword literals as
@@ -333,15 +342,77 @@
 (defn hold
   "Share a cold flow as an rx: any number of readers `?` the hold over
   ONE subscription (for a flowrpc query, one SSE connection), and the
-  last reader leaving tears it down. Pending until the flow's first
-  value — the nearest `:fallback` renders — so definitive states only
-  appear once the source has actually answered; pass `initial` only
-  when an immediate value is the right semantics. Build once (ns level
-  or component body), never inside an rx body — a rebuilt hold is a
-  fresh subscription:
+  last reader leaving tears it down. Build once (ns level or component
+  body), never inside an rx body — a rebuilt hold is a fresh
+  subscription:
 
-      (def projects (hold (rpc/list-projects)))"
-  ([flow] (rx* (fn [] (? flow))))
-  ([flow initial]
-   (let [src (m/ap (m/amb initial (m/?> (unwrap flow))))]
-     (rx* (fn [] (? src))))))
+      (def projects (hold (rpc/list-projects)))
+
+  A hold is ONLY the shared subscription — what readers see is
+  whatever the source emits. No value yet is pending (the nearest
+  `:fallback` renders, `loading?<` reads true); a source that wants a
+  placeholder instead, or a visible refetch, says so itself: flowrpc
+  queries via the `loading-value` / `loading-visible` options, a
+  hand-rolled flow by prepending a seed —
+  (m/ap (m/amb seed (m/?> flow))) — or emitting the `pending` marker."
+  [flow]
+  (rx* (fn [] (? flow))))
+
+;; ---------------------------------------------------------------------------
+;; state flows: loading and failure as ordinary flows
+;;
+;; A flow encodes its states positionally in missionary's protocol:
+;; subscribed-but-silent, emitting, failed. These combinators lift the
+;; silent and failed states into ordinary flows of booleans/values,
+;; leaving the value channel untouched. They are real missionary flows,
+;; consumable anywhere — and they subscribe their source, so derive
+;; them from a shared source (a `hold` or an rx) to read through its
+;; one subscription. Like any flow, build them once — component body
+;; or ns level, never inside an rx body (identity churn, see above).
+
+(defn- lift-states
+  "Flow of `f`'s emissions with its out-of-band states lifted in-band:
+  emits ::silent before `f`'s first emission, and wraps a raw flow
+  failure as an Err value instead of failing. rx sources already carry
+  their states in-band (the pending marker, Err records), so after
+  this lift every state is a value regardless of the source kind."
+  [f]
+  (m/ap (m/amb ::silent
+               (try (m/?> (unwrap f))
+                    (catch Cancelled c (throw c))
+                    (catch #?(:clj Throwable :cljs :default) e (->Err e))))))
+
+(defn loading?<
+  "Flow of booleans over `f` (a flow or rx): `true` while `f` has no
+  value — before its first emission, and whenever it re-enters
+  pending: an rx whose dependency lost its value, or any flow
+  emitting the `pending` marker (e.g. a flowrpc query with
+  `loading-visible` refetching) — `false` once it settles with a
+  value or an error (the error itself
+  travels via `error<` and the value channel; this flow only answers
+  'still waiting?'). Deduplicated.
+
+      (let [thing<   (hold (query …))
+            loading< (loading?< thing<)]
+        (rx (if (? loading<) [spinner] (view (? thing<)))))"
+  [f]
+  (m/eduction (comp (map #(or (= ::silent %) (pending-value? %))) (dedupe))
+              (lift-states f)))
+
+(defn error<
+  "Flow over `f` (a flow or rx): `nil` while `f` is healthy or
+  pending, the error as a value while `f` is failed — an rx source's
+  Err emission, or a raw flow failure. Emits `nil` again if an rx
+  source heals (a dependency change replaces the Err with a value).
+  Lifted to data so a reader can handle failure inline instead of
+  through an :error-boundary. Note reading a failed `f` directly
+  still re-throws: check the error before touching the value channel."
+  [f]
+  (m/eduction (comp (map #(when (err? %) (:error %))) (dedupe))
+              (lift-states f)))
+
+(defn error?<
+  "Flow of booleans over `f`: `true` while `f` is failed, `false`
+  otherwise. Boolean view of `error<`. Deduplicated."
+  [f]
+  (m/eduction (comp (map err?) (dedupe)) (lift-states f)))

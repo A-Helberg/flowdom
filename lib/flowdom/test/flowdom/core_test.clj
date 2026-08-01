@@ -400,13 +400,116 @@
       (dv "ann")
       (is (= [:div [:p "ann"]] (snapshot t))))))
 
-(deftest hold-initial-preempts-pending
+(deftest pending-marker-protocol-re-enters-pending
+  ;; any flow may emit the pending marker (rx/pending) to signal 'no
+  ;; value right now' — readers re-enter pending until the next value.
+  ;; This is how flowrpc's loading-visible surfaces refetches.
+  (let [emit* (atom nil)
+        src   (m/observe (fn [emit!]
+                           (reset! emit* emit!)
+                           (fn [] (reset! emit* nil))))
+        h     (rx/hold src)
+        l<    (rx/loading?< h)]
+    (with-render [t [:div {:fallback [:em "loading"]}
+                     (rx [:p (? h)])
+                     [:span (rx (str (? l<)))]]]
+      (is (re-find #"loading" (str (snapshot t))) "pending before the first value")
+      (@emit* "first")
+      (is (= [:div [:p "first"] [:span "false"]] (snapshot t)))
+      (@emit* rx/pending)
+      (is (= [:div [:em "loading"] [:span "true"]] (snapshot t))
+          "marker re-enters pending, loading?< flips")
+      (@emit* "second")
+      (is (= [:div [:p "second"] [:span "false"]] (snapshot t))))
+    (is (nil? @emit*) "teardown reached the source")))
+
+;; ---------------------------------------------------------------------------
+;; state flows: loading?< / error< / error?< — loading and failure as
+;; ordinary flows, the value channel untouched
+
+(deftest loading?<-flips-on-first-value
   (let [dv (m/dfv)
-        h  (rx/hold (m/ap (m/? dv)) [])]
-    (with-render [t [:div {:fallback [:em "loading"]} (rx [:p (count (? h))])]]
-      (is (= [:div [:p 0]] (snapshot t)) "initial renders immediately")
-      (dv ["a" "b"])
-      (is (= [:div [:p 2]] (snapshot t))))))
+        h  (rx/hold (m/ap (m/? dv)))
+        p< (rx/loading?< h)]
+    (with-render [t [:div (rx (if (? p<) [:em "loading"] [:p (? h)]))]]
+      (is (= [:div [:em "loading"]] (snapshot t)))
+      (dv "ann")
+      (is (= [:div [:p "ann"]] (snapshot t))))))
+
+(deftest loading?<-is-false-immediately-for-a-ready-source
+  ;; a synchronously-ready source settles during subscription — no
+  ;; transient loading frame
+  (let [h  (rx/hold (m/seed [7]))
+        p< (rx/loading?< h)]
+    (with-render [t [:span (rx (if (? p<) "loading" "ready"))]]
+      (is (= [:span "ready"] (snapshot t))))))
+
+(defn- failable
+  "Flow: emits the dfv's value, or throws it if it is a Throwable."
+  [dv]
+  (m/ap (let [v (m/? dv)]
+          (if (instance? Throwable v) (throw v) v))))
+
+(deftest error<-carries-the-failure-as-a-value
+  (let [dv (m/dfv)
+        h  (rx/hold (failable dv))
+        p< (rx/loading?< h)
+        e< (rx/error< h)]
+    (with-render [t [:div (rx (cond
+                                (some? (? e<)) [:em (ex-message (? e<))]
+                                (? p<)         [:em "loading"]
+                                :else          [:p (? h)]))]]
+      (is (= [:div [:em "loading"]] (snapshot t)))
+      (dv (ex-info "boom" {}))
+      (is (= [:div [:em "boom"]] (snapshot t))))))
+
+(deftest error?<-flips-on-failure-and-loading?<-settles
+  (let [dv  (m/dfv)
+        h   (rx/hold (failable dv))
+        p<  (rx/loading?< h)
+        e?< (rx/error?< h)]
+    (with-render [t [:span (rx (str (? p<) "/" (? e?<)))]]
+      (is (= [:span "true/false"] (snapshot t)))
+      (dv (ex-info "boom" {}))
+      (is (= [:span "false/true"] (snapshot t))
+          "failure settles loading and raises the error flag"))))
+
+(deftest error<-stays-nil-on-success
+  (let [dv (m/dfv)
+        h  (rx/hold (failable dv))
+        e< (rx/error< h)]
+    (with-render [t [:span (rx (str (? e<)))]]
+      (is (= [:span ""] (snapshot t)))
+      (dv "fine")
+      (is (= [:span ""] (snapshot t))))))
+
+(deftest error?<-clears-when-the-source-heals
+  ;; an rx source that heals (dependency change replaces the Err with
+  ;; a value) clears the error flag — states track, not latch
+  (let [flag (atom true)
+        src  (rx (if (? flag) (throw (ex-info "boom" {})) :ok))
+        e?<  (rx/error?< src)]
+    (with-render [t [:span (rx (str (? e?<)))]]
+      (is (= [:span "true"] (snapshot t)))
+      (reset! flag false)
+      (is (= [:span "false"] (snapshot t))))))
+
+(deftest state-flows-share-the-held-subscription
+  (let [subs (atom 0)
+        src  (m/observe (fn [emit!]
+                          (swap! subs inc)
+                          (emit! 7)
+                          (fn [] (swap! subs dec))))
+        h    (rx/hold src)
+        p<   (rx/loading?< h)
+        e?<  (rx/error?< h)]
+    (with-render [t [:div
+                     [:span (rx (? h))]
+                     [:span (rx (str (? p<)))]
+                     [:span (rx (str (? e?<)))]]]
+      (is (= [:div [:span 7] [:span "false"] [:span "false"]] (snapshot t)))
+      (is (= 1 @subs) "value reader + two state readers, one subscription"))
+    (is (= 0 @subs) "teardown intact")))
 
 ;; ---------------------------------------------------------------------------
 ;; churn detection: the build-a-flow-inside-the-body footgun
