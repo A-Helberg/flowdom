@@ -765,15 +765,17 @@
         "yet' is not 'loading'."]
        [:p "Its sibling " [:code "(loading-value x)"] " governs a "
         [:em "different"] " moment: what precedes the query's "
-        [:em "first answer ever"] ". The mount renders " [:code "x"]
-        " immediately instead of pending — and that's all it does: a "
-        "refetch never re-emits the placeholder (a live canvas seeds "
-        "once; it doesn't flash blank every reconnect). The two "
-        "compose — placeholder initially, loading marker on "
-        "refetches — and independently: neither, either, or both. A "
-        "placeholder spends the initial loading state — readers "
-        "can't tell " [:code "x"] " from an answer — so pass one "
-        "only when an immediate value is the right semantics."]
+        [:em "first answer ever"] ". The placeholder arrives "
+        [:em "wrapped"] " — " [:code "[:flowdom.rx/loading x]"]
+        " — so it stays distinguishable from answers: " [:code "?"]
+        " hands the wrapper through (a value, so no fallback), "
+        [:code "(rx/value v)"] " unwraps it for rendering, "
+        [:code "(rx/loading? v)"] " tests it, and " [:code "loading?<"]
+        " stays true until the real answer lands. First answer only: "
+        "a refetch never re-emits the placeholder (a live canvas "
+        "seeds once; it doesn't flash blank every reconnect). The "
+        "two options compose — placeholder initially, loading marker "
+        "on refetches — and independently: neither, either, or both."]
        [:p "The marker itself — the keyword "
         [:code ":flowdom.rx/pending"] ", public as "
         [:code "flowdom.rx/pending"] " — is a protocol, not flowrpc "

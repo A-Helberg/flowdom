@@ -143,10 +143,11 @@
         {:keys [seen cancel!]} (consume!
                                 (stream/follow-args [room (stream/loading-value [])]
                                                     (fn [vs] (swap! starts conj vs) (forever vs))))]
-    (is (= [[] ["general"]] @seen) "placeholder precedes the first answer")
+    (is (= [[:flowdom.rx/loading []] ["general"]] @seen)
+        "the placeholder precedes the first answer, wrapped — distinguishable")
     (is (= [["general"]] @starts) "the wrapper is filtered — make-flow never sees it")
     (reset! room "random")
-    (is (= [[] ["general"] ["random"]] @seen)
+    (is (= [[:flowdom.rx/loading []] ["general"] ["random"]] @seen)
         "a refetch does NOT re-emit the placeholder — stale holds")
     (cancel!)))
 
@@ -159,10 +160,10 @@
                                                      stream/loading-visible
                                                      (stream/loading-value :blank)]
                                                     (fn [vs] (forever vs))))]
-    (is (= [:blank ["general"]] @seen)
-        "first connect: placeholder, no marker")
+    (is (= [[:flowdom.rx/loading :blank] ["general"]] @seen)
+        "first connect: wrapped placeholder, no marker")
     (reset! room "random")
-    (is (= [:blank ["general"] :flowdom.rx/pending ["random"]] @seen)
+    (is (= [[:flowdom.rx/loading :blank] ["general"] :flowdom.rx/pending ["random"]] @seen)
         "refetch: marker, no placeholder")
     (cancel!)))
 
@@ -173,7 +174,7 @@
                                                     (fn [vs] (forever vs))))]
     (is (= [] @seen) "nothing emitted while unresolved, placeholder included")
     (reset! sel "id-1")
-    (is (= [:empty ["id-1"]] @seen))
+    (is (= [[:flowdom.rx/loading :empty] ["id-1"]] @seen))
     (cancel!)))
 
 (deftest equal-values-do-not-restart-or-flash

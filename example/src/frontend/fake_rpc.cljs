@@ -41,7 +41,8 @@
 
 (def loading-value
   "Re-export of flowrpc's placeholder wrapper: (loading-value x) in a
-  query's args emits `x` once, before the query's first answer."
+  query's args emits [:flowdom.rx/loading x] once, before the
+  query's first answer."
   stream/loading-value)
 
 ;; How many query flows are running right now — what a server would

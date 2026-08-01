@@ -58,6 +58,31 @@
 
 (defn err? [v] (instance? Err v))
 
+(def ^:private loading-tag ::loading)
+
+(defn loading
+  "Wrap `x` as a loading-with-value: a plain tagged value —
+  [:flowdom.rx/loading x] — that travels the value channel like any
+  other (`?` returns it as-is, no suspense, rx dedupe sees it as
+  distinct from the bare x), while `loading?<` reads it as loading.
+  For placeholders that must stay distinguishable from answers:
+  flowrpc's loading-value emits this. Check with `loading?`, unwrap
+  with `value`."
+  [x]
+  [loading-tag x])
+
+(defn loading?
+  "Is `v` a loading-with-value wrapper (see `loading`)?"
+  [v]
+  (and (vector? v) (= 2 (count v)) (= loading-tag (nth v 0))))
+
+(defn value
+  "Unwrap a loading-with-value wrapper; identity on anything else.
+  For readers that render the placeholder and answers alike:
+  (draw (value (? canvas<)))."
+  [v]
+  (if (loading? v) (nth v 1) v))
+
 ;; ---------------------------------------------------------------------------
 ;; the Rx type — a missionary flow the renderer can recognize
 
@@ -384,11 +409,12 @@
 
 (defn loading?<
   "Flow of booleans over `f` (a flow or rx): `true` while `f` has no
-  value — before its first emission, and whenever it re-enters
-  pending: an rx whose dependency lost its value, or any flow
-  emitting the `pending` marker (e.g. a flowrpc query with
-  `loading-visible` refetching) — `false` once it settles with a
-  value or an error (the error itself
+  value — before its first emission, whenever it re-enters pending
+  (an rx whose dependency lost its value, or any flow emitting the
+  `pending` marker, e.g. a flowrpc query with `loading-visible`
+  refetching), and while its current value is a loading-with-value
+  wrapper (see `loading`) — `false` once it settles with an answer
+  or an error (the error itself
   travels via `error<` and the value channel; this flow only answers
   'still waiting?'). Deduplicated.
 
@@ -396,7 +422,8 @@
             loading< (loading?< thing<)]
         (rx (if (? loading<) [spinner] (view (? thing<)))))"
   [f]
-  (m/eduction (comp (map #(or (= ::silent %) (pending-value? %))) (dedupe))
+  (m/eduction (comp (map #(or (= ::silent %) (pending-value? %) (loading? %)))
+                    (dedupe))
               (lift-states f)))
 
 (defn error<

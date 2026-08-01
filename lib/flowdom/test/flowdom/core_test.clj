@@ -494,6 +494,27 @@
       (reset! flag false)
       (is (= [:span "false"] (snapshot t))))))
 
+(deftest loading-with-value-travels-as-a-value
+  ;; (rx/loading x) rides the value channel: ? hands the wrapper
+  ;; through untouched (no suspense), rx/value unwraps for rendering,
+  ;; and loading?< reads true until a bare answer replaces it
+  (let [emit* (atom nil)
+        src   (m/observe (fn [emit!]
+                           (reset! emit* emit!)
+                           (fn [] (reset! emit* nil))))
+        h     (rx/hold src)
+        l<    (rx/loading?< h)]
+    (with-render [t [:div {:fallback [:em "suspended"]}
+                     [:p (rx (str (rx/value (? h))))]
+                     [:code (rx (str (rx/loading? (? h))))]
+                     [:span (rx (str (? l<)))]]]
+      (@emit* (rx/loading "—:—"))
+      (is (= [:div [:p "—:—"] [:code "true"] [:span "true"]] (snapshot t))
+          "placeholder renders — no fallback — while loading?< stays true")
+      (@emit* "12:00")
+      (is (= [:div [:p "12:00"] [:code "false"] [:span "false"]] (snapshot t))
+          "a bare answer settles everything"))))
+
 (deftest state-flows-share-the-held-subscription
   (let [subs (atom 0)
         src  (m/observe (fn [emit!]
