@@ -44,18 +44,25 @@
 
 (defn- diff-stream
   "Transforms a source stream into one that emits {:rpc/type :full/:patch :rpc/data ...}.
-   First emission is always :full; subsequent ones are :patch with an edit vector."
+   First emission is always :full; subsequent ones are :patch with an edit vector.
+   nil is a value and participates in diffing like any other query result."
   [source]
   (let [out  (s/stream 16)
         prev (atom ::none)
         done (s/consume
               (fn [v]
-                (let [p   @prev
-                      msg (if (= p ::none)
-                            {:rpc/type :full  :rpc/data v}
-                            {:rpc/type :patch :rpc/data (patch/diff p v)})]
-                  (reset! prev v)
-                  @(s/put! out msg)))
+                ;; An exception envelope is transport-level, not a query
+                ;; value: pass it through untouched so sse-message emits
+                ;; an :exception event (which fails the client flow)
+                ;; instead of wrapping it as a :full \"answer\".
+                (if (and (map? v) (= :exception (:flowrpc.sse/event v)))
+                  @(s/put! out v)
+                  (let [p   @prev
+                        msg (if (= p ::none)
+                              {:rpc/type :full  :rpc/data v}
+                              {:rpc/type :patch :rpc/data (patch/diff p v)})]
+                    (reset! prev v)
+                    @(s/put! out msg))))
               source)]
     (dfr/on-realized done
                      (fn [_] (s/close! out))

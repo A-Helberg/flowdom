@@ -23,7 +23,8 @@
    [taoensso.timbre :as log]
    [flowrpc.sse :as sse]
    [flowrpc.registry :as registry]
-   [flowrpc.transit :as transit]))
+   [flowrpc.transit :as transit])
+  (:import [missionary Cancelled]))
 
 (defn- ensure-stream [x]
   (if (s/stream? x)
@@ -46,8 +47,10 @@
                 (fn [e]
                   ;; a cancelled run fails by design — only log failures
                   ;; that happened while anyone was still listening.
-                  (when-not (s/closed? out)
-                    (log/error e "flow->stream: flow failed"))
+                  (when-not (or (s/closed? out) (instance? Cancelled e))
+                    (log/error e "flow->stream: flow failed")
+                    @(s/put! out {:flowrpc.sse/event :exception
+                                  :flowrpc.sse/payload {:message (.getMessage ^Throwable e)}}))
                   (s/close! out)))]
     (s/on-closed out cancel)
     out))

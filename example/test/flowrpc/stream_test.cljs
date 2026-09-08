@@ -4,6 +4,7 @@
   test build of its own yet."
   (:require [cljs.test :refer-macros [deftest is async]]
             [missionary.core :as m]
+            [flowrpc.patch :as patch]
             [flowrpc.stream :as stream]))
 
 (defn- forever
@@ -26,6 +27,22 @@
                               (is false (str "flow failed early: " (.-message e))))))]
     {:seen    seen
      :cancel! (fn [] (reset! cancelled? true) (cancel))}))
+
+(deftest nil-values-are-emitted-and-remain-valid-patch-bases
+  (let [values [nil {:a 1} nil nil {:a 2} {:a 3}]
+        events (into [[:full (first values)]]
+                     (map (fn [[a b]] [:patch (patch/diff a b)]))
+                     (partition 2 1 values))
+        {:keys [seen]} (consume!
+                        (m/eduction (stream/diff-xf) (m/seed events)))]
+    (is (= values @seen))))
+
+(deftest full-nil-replaces-a-previous-answer
+  (let [events [[:full {:a 1}] [:full nil]
+                [:patch (patch/diff nil {:a 2})]]
+        {:keys [seen]} (consume!
+                        (m/eduction (stream/diff-xf) (m/seed events)))]
+    (is (= [{:a 1} nil {:a 2}] @seen))))
 
 (deftest plain-args-pass-straight-through
   (let [made (atom [])
