@@ -1,4 +1,6 @@
-{;; rx is a plain body macro — lint its body as top-level forms
- :lint-as {flowdom.rx/rx            clojure.core/do
+{;; rx wraps a body for deferred/repeated evaluation; delay analyzes the
+ ;; body identically but, unlike do, doesn't trip :redundant-do on
+ ;; single-form bodies
+ :lint-as {flowdom.rx/rx            clojure.core/delay
            ;; with-render binds one symbol to a handle, like with-open
            flowdom.core/with-render clojure.core/with-open}}
