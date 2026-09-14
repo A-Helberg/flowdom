@@ -591,3 +591,35 @@
       (is (= [:div [:ul [:li "a"] [:li "b"]]] (snapshot t)))
       (reset! ready false)
       (is (re-find #"loading" (str (snapshot t))) "pending again → fallback"))))
+
+;; ---------------------------------------------------------------------------
+;; sources that notify during add-watch (reagent cursors do this): the
+;; re-run they trigger lands while the rx's observe is still being set
+;; up, and a second synchronous emission there used to crash missionary
+;; with "Can't process event - consumer is not ready." The second run
+;; only re-emits when the body's value is unequal each time — an inline
+;; handler fn defeats the not= dedupe exactly like real component code.
+
+(defn- eager-ref
+  "An IRef that, like a reagent cursor, fires a freshly-added watch
+   immediately with a changed value."
+  [value]
+  (reify clojure.lang.IRef
+    (deref [_] value)
+    (addWatch [this k f] (f k this ::stale value) this)
+    (removeWatch [this _k] this)))
+
+(deftest eager-watch-source-with-unstable-emissions
+  (let [src    (eager-ref 42)
+        node   (rx (let [v (? src)] [:span {:on-click (fn [_] v)} v]))
+        crash  (promise)
+        cancel ((m/reduce (fn [_ v] v) nil (rx/unwrap node))
+                (fn [_] nil)
+                (fn [e] (deliver crash e)))]
+    (try
+      (is (not (realized? crash))
+          (str "rx over an eager-notify source must not fail its flow: "
+               (when (realized? crash) (ex-message @crash))))
+      (let [snap (snapshot {:tree node})]
+        (is (= 42 (last snap)) "latest body value is served"))
+      (finally (cancel)))))

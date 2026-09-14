@@ -302,8 +302,23 @@
                              (if (pending-ex? e) pending (->Err e))))]
                    (note-churn! ctx (gc-cells! ctx))
                    (when (not= v @(:last ctx))
-                     (reset! (:last ctx) v)
-                     ((:emit! ctx) v)))
+                     (reset! (:last ctx) v))
+                   ;; Emit only when the run SETTLED (the body didn't
+                   ;; re-dirty itself). A source that notifies during
+                   ;; add-watch — a reagent cursor does — dirties the
+                   ;; ctx mid-body, and emitting that superseded value
+                   ;; would be the observe's second synchronous
+                   ;; emission while its consumer is still subscribing:
+                   ;; the JVM blocks the thread, JS throws "consumer is
+                   ;; not ready". The relieve stage discards
+                   ;; intermediates anyway; :sent tracks what the
+                   ;; consumer actually has so a settle back to an
+                   ;; already-sent value stays silent.
+                   (when-not @(:dirty ctx)
+                     (let [lv @(:last ctx)]
+                       (when (not= lv @(:sent ctx))
+                         (reset! (:sent ctx) lv)
+                         ((:emit! ctx) lv)))))
                  (recur (inc n))))))
          (finally
            (reset! (:running ctx) false)))))))
@@ -329,6 +344,7 @@
                              :running      (atom false)
                              :alive        (atom true)
                              :last         (atom ::unset)
+                             :sent         (atom ::unset)
                              :thunk        thunk
                              :emit!        emit!
                              :lock         #?(:clj (Object.) :cljs nil)}]
