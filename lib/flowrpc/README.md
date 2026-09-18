@@ -85,6 +85,35 @@ A rejecting handler signals its status through ex-data — `(throw (ex-info "no 
 
 One consequence to design for: decode runs once per request, and an SSE connection can be long-lived. Reconstruct **identity** at the edge and derive **authorization** from the db inside the query fn — `(fn [db] (visible-notes db (d/entity db user-id)))` re-reads roles from every `db-after`, so open streams tighten on the transaction that revokes, not at reconnect.
 
+### Diff budgets
+
+The first answer is a `:full` SSE event. Later answers use editscript's
+`:quick` algorithm when both the previous and current values fit the diff
+budget; otherwise they send another `:full`. The client accepts full values
+midstream and resets its patch baseline, so fallback needs no client upgrade.
+
+`handle-query` and `sse/manifold->sse` accept these options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `:diff-algo` | `:quick` | Editscript algorithm; `:a-star` is an expensive opt-in. |
+| `:max-diff-size` | `10000` | Maximum nodes in **each** value; `0` disables diffing. |
+| `:vec-timeout` | `10` | Positive milliseconds per sequence comparison; timeout replaces that sequence. |
+
+The size guard counts collections, map entries, keys and leaves (so `{:a 1}`
+has four nodes). It stops at the budget and also skips diffing past depth 64,
+with the root at depth zero. A value's eligibility is cached for the next
+emission. These are structural limits, not byte limits; strings are leaves.
+The sequence timeout is cooperative and applies separately to each sequence,
+not to the whole diff. Full-value serialization and transmission still cost
+proportional to the payload. The defaults are conservative starting points;
+tune against your query results and use pagination for unbounded lists.
+
+```clojure
+(rpc/handle-query req
+  (assoc transit-handlers :max-diff-size 5000 :vec-timeout 5))
+```
+
 ### Anchors
 
 `live`'s db argument is the flow's **lower bound**: the flow starts from the anchor and immediately catches up to the head report's db (latest-wins), so consumers see the freshest answer and never anything older than what they hold. Queries anchored to the same value start from the same point in time; a command response carrying the post-transaction db gives read-your-writes by construction. A non-nil anchor is passed to `f` exactly as given; nil means **no floor** — the head already supplies the present.

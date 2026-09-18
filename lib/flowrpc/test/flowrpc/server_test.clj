@@ -1,12 +1,21 @@
 (ns flowrpc.server-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [manifold.stream :as s]
+            [flowrpc.patch :as patch]
             [flowrpc.registry :as registry]
             [flowrpc.server :as server]
+            [flowrpc.sse-test :refer [drain!]]
             [flowrpc.transit :as transit]))
 
 (defn echo [x] x)
 (defn stream-one [] (let [st (s/stream 1)] @(s/put! st :result) (s/close! st) st))
+
+(defn stream-two []
+  (let [st (s/stream 2)]
+    @(s/put! st {:a 1})
+    @(s/put! st {:a 2})
+    (s/close! st)
+    st))
 
 (use-fixtures :each
   (fn [f]
@@ -37,6 +46,27 @@
   (let [resp (server/handle-query (query-req 'flowrpc.server-test/stream-one))]
     (is (= 200 (:status resp)))
     (is (s/stream? (:body resp)))))
+
+(deftest query-can-disable-diffing
+  (registry/register! #'stream-two)
+  (let [resp (server/handle-query (query-req 'flowrpc.server-test/stream-two)
+                                  {:max-diff-size 0})]
+    (is (= 200 (:status resp)))
+    (is (= (mapv #(str "event: full\ndata: " (transit/write %) "\n\n")
+                 [{:a 1} {:a 2}])
+           (drain! (:body resp))))))
+
+(deftest query-forwards-algorithm-and-timeout
+  (registry/register! #'stream-two)
+  (let [diff patch/diff
+        seen (atom [])]
+    (with-redefs [patch/diff (fn [a b opts]
+                              (swap! seen conj opts)
+                              (diff a b opts))]
+      (let [resp (server/handle-query (query-req 'flowrpc.server-test/stream-two)
+                                      {:diff-algo :a-star :vec-timeout 5})]
+        (is (= 2 (count (drain! (:body resp)))))
+        (is (= [{:algo :a-star :vec-timeout 5}] @seen))))))
 
 ;; ---------------------------------------------------------------------------
 ;; handle-command

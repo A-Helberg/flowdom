@@ -92,10 +92,15 @@
                       argument the endpoint fn receives in place of
                       the token
      :write-handlers  {type {:tag … :rep …}} — per-request transit
-                      write handlers for the outgoing stream"
+                      write handlers for the outgoing stream
+     :diff-algo       :quick (default) or :a-star
+     :max-diff-size   nodes per result (default 10000); 0 disables diffing
+     :vec-timeout     milliseconds per sequence diff (default 10)
+   See flowrpc.sse/manifold->sse for the diff budget semantics."
   ([req] (handle-query req nil))
-  ([req {:keys [read-handlers write-handlers max-bytes max-depth]
-         :or   {max-bytes default-max-bytes max-depth default-max-depth}}]
+  ([req {:keys [read-handlers max-bytes max-depth]
+         :or   {max-bytes default-max-bytes max-depth default-max-depth}
+         :as opts}]
    (let [qs (get (:query-params req) "q")]
      (if (nil? qs)
        (do (log/error "handle-query: missing q param" {:query-params (:query-params req)})
@@ -121,7 +126,9 @@
                             :else              (ensure-stream result))]
                {:status  200
                 :headers sse/headers
-                :body    (sse/manifold->sse stream {:write-handlers write-handlers})})))
+                :body    (sse/manifold->sse stream
+                           (select-keys opts [:write-handlers :diff-algo
+                                              :max-diff-size :vec-timeout]))})))
          (catch Throwable t
            (log/error t "handle-query: exception" {:qs qs})
            {:status  (error-status t)

@@ -573,6 +573,14 @@
         "anyone is subscribed. That is the reason to use one — the "
         "component never refetches, polls, or invalidates a cache, "
         "because the answer keeps itself current."]
+       [:p "The wire sends quick patches while both answers fit a "
+        "10,000-node budget; larger answers or nesting beyond 64 "
+        "use a full value. The client accepts a full value at any "
+        "point and uses it as the next patch's baseline. Configure "
+        [:code ":max-diff-size"] " on " [:code "handle-query"]
+        " (0 always sends full values). Sequence comparisons have "
+        "a cooperative 10 ms timeout, configurable with "
+        [:code ":vec-timeout"] "; on timeout the sequence is replaced."]
        [:p "On the server, a query is any missionary flow. This "
         "page's server state is an atom, so the flow is one you'd "
         "write yourself: " [:code "m/watch"] " the atom, map a "

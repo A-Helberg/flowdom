@@ -44,6 +44,17 @@
                         (m/eduction (stream/diff-xf) (m/seed events)))]
     (is (= [{:a 1} nil {:a 2}] @seen))))
 
+(deftest full-fallback-between-patches-resets-the-baseline
+  (let [a {:items [1 2]}
+        b {:items [2 1]}
+        c {:items [10 20 30]}
+        d {:items [10 21 30]}
+        events [[:full a] [:patch (patch/diff a b)]
+                [:full c] [:patch (patch/diff c d)]]
+        {:keys [seen]} (consume!
+                        (m/eduction (stream/diff-xf) (m/seed events)))]
+    (is (= [a b c d] @seen))))
+
 (deftest plain-args-pass-straight-through
   (let [made (atom [])
         {:keys [seen]} (consume!
