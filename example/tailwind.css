@@ -3,7 +3,7 @@
 @plugin "@tailwindcss/typography";
 
 @source "./src";
-@source "../lib/solidclj-docs/src";
+@source "../lib/flowdom-docs/src";
 @source "./resources/public/index.html";
 
 /* code panels bring their own background (bg-gray-950) */
