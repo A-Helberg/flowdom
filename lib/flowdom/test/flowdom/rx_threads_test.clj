@@ -91,6 +91,30 @@
                          (finally (stop!)))))
                    :done)))))
 
+(deftest a-busy-writer-elsewhere-cant-hold-the-owner
+  ;; the owner's own write starts a slow run; only then does another
+  ;; thread write a dependency, faster than the body runs. The owner
+  ;; still returns, and that thread's last write still lands.
+  (let [n       (atom 0)
+        mine    (atom 0)
+        started (promise)
+        stop?   (atom false)]
+    (with-render [t [:div (rx (when (pos? (? mine)) (deliver started true))
+                              (Thread/sleep 1)
+                              [:p (? n)])]]
+      (let [ham (doto (Thread. ^Runnable
+                       (fn [] @started
+                         (while (not @stop?)
+                           (swap! n inc)
+                           (Thread/sleep 0 200000))))
+                  (.setDaemon true)
+                  (.start))]
+        (try
+          (is (= :returned (within 5000 (fn [] (swap! mine inc) :returned))))
+          (finally (reset! stop? true) (.join ham 1000))))
+      (let [final @n]
+        (is (= [:div [:p final]] (fd/await t #(= [:div [:p final]] %))))))))
+
 (deftest a-write-on-another-thread-still-lands
   (let [n (atom 0)]
     (with-render [t [:div (rx [:p (rx (? n))])]]

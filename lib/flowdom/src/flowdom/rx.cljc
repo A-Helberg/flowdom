@@ -24,9 +24,11 @@
 
   Concurrency: on the JVM a dependency may emit from any thread. Runs
   of one rx are serialized without a lock: the first notified thread
-  takes ownership and re-runs until nothing is left dirty; a thread
+  takes ownership and re-runs until its own write has settled; a thread
   that notifies an rx another thread is running only marks it dirty
-  and returns, and the owner picks the change up before letting go.
+  and returns. The owner never takes on that other thread's writes —
+  a fast writer would keep it from ever returning — so any still
+  flagged when it lets go are run down on a pooled drain thread.
   Nothing ever waits on an rx, so a notification arriving under
   missionary's own process locks cannot deadlock against a teardown
   or a re-run on another thread. Propagation is synchronous on the
@@ -283,7 +285,8 @@
 ;; flags and leaves. :dirty is set by the owner's own thread (the body
 ;; writing what it reads, a source notifying during subscribe) and
 ;; feeds the settle and runaway rules; :foreign is set by other threads
-;; and only asks for one more run.
+;; and only asks for one more run — by a drain thread when the owner is
+;; a caller's thread (see run-loop!).
 
 (defn- me []
   #?(:clj (Thread/currentThread) :cljs true))
@@ -300,17 +303,31 @@
         ((:stop! cell))))))
 
 (defn- run-loop!
-  "Re-run until settled. `setup?` is the first run, inside the observe
-  subscription: its consumer takes nothing until the subscription
-  returns, so a second emission there would wait on itself — stop after
-  the first and leave other threads' writes flagged."
-  [ctx setup?]
-  (loop [n 0 emitted? false]
-    (when-not (and setup? emitted? (not @(:dirty ctx)))
-      (let [foreign? (compare-and-set! (:foreign ctx) true false)]
-        (when (and @(:alive ctx) (or foreign? @(:dirty ctx)))
-          ;; another thread's write is new input, not the body chasing its tail
-          (let [n (if foreign? 0 n)]
+  "Re-run until settled. `mode` says whose work this thread takes on:
+
+  - :sync  — a notifying thread: its own write, then re-runs only while
+    its own thread keeps dirtying the rx. Another thread's write that
+    lands meanwhile is left flagged for a drain: a writer on another
+    thread may flag faster than the body runs, and an owner that chased
+    those flags would never return to its caller.
+  - :setup — :sync inside the observe subscription, whose consumer
+    takes nothing until the subscription returns, so a second emission
+    there would wait on itself — also stop after the first emission.
+  - :drain — a thread with no caller waiting: runs every flag down.
+
+  A run reads every source's current value, so it covers any foreign
+  write flagged before it starts; that flag is cleared as it begins."
+  [ctx mode]
+  (loop [n 0 emitted? false first? true]
+    (when-not (and (= mode :setup) emitted? (not @(:dirty ctx)))
+      (let [dirty?   @(:dirty ctx)
+            foreign? (and (or dirty? first? (= mode :drain))
+                          (compare-and-set! (:foreign ctx) true false))]
+        (when (and @(:alive ctx) (or dirty? foreign?))
+          ;; another thread's write is new input, not the body chasing
+          ;; its tail — but only a run with no own dirt of its own, so a
+          ;; busy writer elsewhere can't mask a runaway body
+          (let [n (if dirty? n 0)]
             (if (> n runaway-cap)
               ;; THROW, don't emit: mid-spin the observe consumer may
               ;; not be draining yet, so a second emission would block
@@ -347,37 +364,57 @@
                                    (reset! (:sent ctx) lv)
                                    ((:emit! ctx) lv)
                                    true)))
-                             emitted?)))))))))))
+                             emitted?)
+                         false))))))))))
+
+(declare drive!)
+
+#?(:clj
+   (def ^:private drainer
+     "Drain threads: daemon, pooled — idle ones exit after a minute."
+     (java.util.concurrent.Executors/newCachedThreadPool
+      (reify java.util.concurrent.ThreadFactory
+        (newThread [_ r]
+          (doto (Thread. ^Runnable r "flowdom rx drain")
+            (.setDaemon true)))))))
 
 (defn- hand-off!
-  "Finish a setup cut short by another thread's write on a thread of its
-  own: its emission waits until this subscription has returned."
+  "Run another thread's flagged writes down on a drain thread, so the
+  caller returns. From a setup, the drain's emission waits until this
+  subscription has returned."
   [ctx]
-  #?(:clj  (doto (Thread. ^Runnable (fn [] (run-rx! ctx)) "flowdom rx hand-off")
-             (.setDaemon true)
-             (.start))
-     :cljs (run-rx! ctx)))
+  #?(:clj  (.execute ^java.util.concurrent.Executor drainer
+                     ^Runnable (fn [] (drive! ctx :drain)))
+     :cljs (drive! ctx :drain)))
+
+(defn- drive!
+  "Take ownership if nobody has it and run in `mode` (see run-loop!).
+  A thread that finds the rx owned leaves: its flag is already raised."
+  [ctx mode]
+  (when (compare-and-set! (:owner ctx) nil (me))
+    (try
+      (run-loop! ctx mode)
+      (finally
+        (reset! (:owner ctx) nil)
+        (when-not @(:alive ctx)
+          (teardown! ctx))))
+    ;; flags left for a drain, or raised between the last check and the
+    ;; release: someone must run them, and never a caller-bound thread
+    (when (and @(:alive ctx) (or @(:dirty ctx) @(:foreign ctx)))
+      (if (= mode :drain)
+        (recur ctx :drain)
+        (hand-off! ctx)))))
 
 (defn- run-rx!
-  ([ctx] (run-rx! ctx false))
-  ([ctx setup?]
+  "Notify the rx that a source changed: flag it, then run it here if
+  nobody owns it. `mode` is :sync, or :setup for the first run."
+  ([ctx] (run-rx! ctx :sync))
+  ([ctx mode]
    (let [owner @(:owner ctx)]
      (if (or (nil? owner) (identical? owner (me)))
        (reset! (:dirty ctx) true)
        (reset! (:foreign ctx) true)))
-   (loop [setup? setup?]
-     (when (compare-and-set! (:owner ctx) nil (me))
-       (try
-         (run-loop! ctx setup?)
-         (finally
-           (reset! (:owner ctx) nil)
-           (when-not @(:alive ctx)
-             (teardown! ctx))))
-       ;; a flag raised between the owner's last check and its release
-       (when (and @(:alive ctx) (or @(:dirty ctx) @(:foreign ctx)))
-         (if setup?
-           (hand-off! ctx)
-           (recur false)))))))
+   (drive! ctx mode)))
 
 ;; ---------------------------------------------------------------------------
 ;; rx
@@ -404,7 +441,7 @@
                              :sent         (atom ::unset)
                              :thunk        thunk
                              :emit!        emit!}]
-                    (run-rx! ctx true)
+                    (run-rx! ctx :setup)
                     (fn cleanup []
                       (reset! (:alive ctx) false)
                       (teardown! ctx)))))))))
