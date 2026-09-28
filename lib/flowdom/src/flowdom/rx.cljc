@@ -22,10 +22,17 @@
     an `Err` record; reading an errored rx re-throws, so errors travel
     upward until something (an error boundary) catches them.
 
-  Concurrency: on the JVM a dependency may emit from any thread; runs
-  of one rx are serialized by a per-rx lock and propagation happens
-  synchronously on the emitting thread. In CLJS everything is
-  single-threaded and synchronous."
+  Concurrency: on the JVM a dependency may emit from any thread. Runs
+  of one rx are serialized without a lock: the first notified thread
+  takes ownership and re-runs until nothing is left dirty; a thread
+  that notifies an rx another thread is running only marks it dirty
+  and returns, and the owner picks the change up before letting go.
+  Nothing ever waits on an rx, so a notification arriving under
+  missionary's own process locks cannot deadlock against a teardown
+  or a re-run on another thread. Propagation is synchronous on the
+  emitting thread whenever that thread owns the run — always, when one
+  thread drives. In CLJS everything is single-threaded and
+  synchronous."
   #?(:cljs (:require-macros [flowdom.rx]))
   (:require [missionary.core :as m])
   (:import (missionary Cancelled)))
@@ -114,13 +121,6 @@
   a dependency has no value yet? Error boundaries must re-throw these."
   [e]
   (boolean (and (ex-data e) (get (ex-data e) pending-tag))))
-
-(defn- locked
-  "Run `f` under `lock` on the JVM (runs are serialized per rx);
-  single-threaded CLJS just runs it."
-  [lock f]
-  #?(:clj  (locking lock (f))
-     :cljs (f)))
 
 (defn- atom-like? [x]
   #?(:clj  (instance? clojure.lang.IRef x)
@@ -275,53 +275,109 @@
                 "the body; don't write what you read.")
            {:flowdom/runaway true}))
 
-(defn- run-rx! [ctx]
-  (locked
-   (:lock ctx)
-   (fn []
-     (reset! (:dirty ctx) true)
-     (when (and @(:alive ctx) (not @(:running ctx)))
-       (reset! (:running ctx) true)
+;; Ownership instead of a lock: missionary notifies from inside its own
+;; process locks, and a run calls back into missionary (subscribing,
+;; cancelling, emitting), so a thread BLOCKING on an rx while another
+;; thread's run waits on one of those process locks is a lock-order
+;; inversion. A run is owned by one thread at a time; everyone else
+;; flags and leaves. :dirty is set by the owner's own thread (the body
+;; writing what it reads, a source notifying during subscribe) and
+;; feeds the settle and runaway rules; :foreign is set by other threads
+;; and only asks for one more run.
+
+(defn- me []
+  #?(:clj (Thread/currentThread) :cljs true))
+
+(defn- teardown!
+  "Stop every cell, once: done by the unsubscriber, or — when a run is
+  in progress — by that run's owner as it lets go. The owner slot stays
+  ::dead, so a torn-down rx never runs again."
+  [ctx]
+  (when (compare-and-set! (:owner ctx) nil ::dead)
+    (let [cells @(:cells ctx)]
+      (reset! (:cells ctx) {})
+      (doseq [[_ cell] cells]
+        ((:stop! cell))))))
+
+(defn- run-loop!
+  "Re-run until settled. `setup?` is the first run, inside the observe
+  subscription: its consumer takes nothing until the subscription
+  returns, so a second emission there would wait on itself — stop after
+  the first and leave other threads' writes flagged."
+  [ctx setup?]
+  (loop [n 0 emitted? false]
+    (when-not (and setup? emitted? (not @(:dirty ctx)))
+      (let [foreign? (compare-and-set! (:foreign ctx) true false)]
+        (when (and @(:alive ctx) (or foreign? @(:dirty ctx)))
+          ;; another thread's write is new input, not the body chasing its tail
+          (let [n (if foreign? 0 n)]
+            (if (> n runaway-cap)
+              ;; THROW, don't emit: mid-spin the observe consumer may
+              ;; not be draining yet, so a second emission would block
+              ;; forever. Throwing fails the surrounding process —
+              ;; missionary's error channel carries it to the reader.
+              (do (reset! (:dirty ctx) false)
+                  (throw (runaway-error)))
+              (do
+                (reset! (:dirty ctx) false)
+                (reset! (:used ctx) #{})
+                (reset! (:fresh ctx) #{})
+                (let [v (try
+                          (binding [*ctx* ctx] ((:thunk ctx)))
+                          (catch #?(:clj Throwable :cljs :default) e
+                            (if (pending-ex? e) pending (->Err e))))]
+                  (note-churn! ctx (gc-cells! ctx))
+                  (when (not= v @(:last ctx))
+                    (reset! (:last ctx) v))
+                  ;; Emit only when the run SETTLED (the body didn't
+                  ;; re-dirty itself). A source that notifies during
+                  ;; add-watch — a reagent cursor does — dirties the
+                  ;; ctx mid-body, and emitting that superseded value
+                  ;; would be the observe's second synchronous
+                  ;; emission while its consumer is still subscribing:
+                  ;; the JVM blocks the thread, JS throws "consumer is
+                  ;; not ready". The relieve stage discards
+                  ;; intermediates anyway; :sent tracks what the
+                  ;; consumer actually has so a settle back to an
+                  ;; already-sent value stays silent.
+                  (recur (inc n)
+                         (or (when-not @(:dirty ctx)
+                               (let [lv @(:last ctx)]
+                                 (when (not= lv @(:sent ctx))
+                                   (reset! (:sent ctx) lv)
+                                   ((:emit! ctx) lv)
+                                   true)))
+                             emitted?)))))))))))
+
+(defn- hand-off!
+  "Finish a setup cut short by another thread's write on a thread of its
+  own: its emission waits until this subscription has returned."
+  [ctx]
+  #?(:clj  (doto (Thread. ^Runnable (fn [] (run-rx! ctx)) "flowdom rx hand-off")
+             (.setDaemon true)
+             (.start))
+     :cljs (run-rx! ctx)))
+
+(defn- run-rx!
+  ([ctx] (run-rx! ctx false))
+  ([ctx setup?]
+   (let [owner @(:owner ctx)]
+     (if (or (nil? owner) (identical? owner (me)))
+       (reset! (:dirty ctx) true)
+       (reset! (:foreign ctx) true)))
+   (loop [setup? setup?]
+     (when (compare-and-set! (:owner ctx) nil (me))
        (try
-         (loop [n 0]
-           (when (and @(:alive ctx) @(:dirty ctx))
-             (if (> n runaway-cap)
-               ;; THROW, don't emit: mid-spin the observe consumer may
-               ;; not be draining yet, so a second emission would block
-               ;; forever. Throwing fails the surrounding process —
-               ;; missionary's error channel carries it to the reader.
-               (do (reset! (:dirty ctx) false)
-                   (throw (runaway-error)))
-               (do
-                 (reset! (:dirty ctx) false)
-                 (reset! (:used ctx) #{})
-                 (reset! (:fresh ctx) #{})
-                 (let [v (try
-                           (binding [*ctx* ctx] ((:thunk ctx)))
-                           (catch #?(:clj Throwable :cljs :default) e
-                             (if (pending-ex? e) pending (->Err e))))]
-                   (note-churn! ctx (gc-cells! ctx))
-                   (when (not= v @(:last ctx))
-                     (reset! (:last ctx) v))
-                   ;; Emit only when the run SETTLED (the body didn't
-                   ;; re-dirty itself). A source that notifies during
-                   ;; add-watch — a reagent cursor does — dirties the
-                   ;; ctx mid-body, and emitting that superseded value
-                   ;; would be the observe's second synchronous
-                   ;; emission while its consumer is still subscribing:
-                   ;; the JVM blocks the thread, JS throws "consumer is
-                   ;; not ready". The relieve stage discards
-                   ;; intermediates anyway; :sent tracks what the
-                   ;; consumer actually has so a settle back to an
-                   ;; already-sent value stays silent.
-                   (when-not @(:dirty ctx)
-                     (let [lv @(:last ctx)]
-                       (when (not= lv @(:sent ctx))
-                         (reset! (:sent ctx) lv)
-                         ((:emit! ctx) lv)))))
-                 (recur (inc n))))))
+         (run-loop! ctx setup?)
          (finally
-           (reset! (:running ctx) false)))))))
+           (reset! (:owner ctx) nil)
+           (when-not @(:alive ctx)
+             (teardown! ctx))))
+       ;; a flag raised between the owner's last check and its release
+       (when (and @(:alive ctx) (or @(:dirty ctx) @(:foreign ctx)))
+         (if setup?
+           (hand-off! ctx)
+           (recur false)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; rx
@@ -341,22 +397,17 @@
                              :recent-drops (atom [])
                              :churn        (atom {:streak 0 :warned? false})
                              :dirty        (atom false)
-                             :running      (atom false)
+                             :foreign      (atom false)
+                             :owner        (atom nil)
                              :alive        (atom true)
                              :last         (atom ::unset)
                              :sent         (atom ::unset)
                              :thunk        thunk
-                             :emit!        emit!
-                             :lock         #?(:clj (Object.) :cljs nil)}]
-                    (run-rx! ctx)
+                             :emit!        emit!}]
+                    (run-rx! ctx true)
                     (fn cleanup []
-                      (locked
-                       (:lock ctx)
-                       (fn []
-                         (reset! (:alive ctx) false)
-                         (doseq [[_ cell] @(:cells ctx)]
-                           ((:stop! cell)))
-                         (reset! (:cells ctx) {})))))))))))
+                      (reset! (:alive ctx) false)
+                      (teardown! ctx)))))))))
 
 #?(:clj
    (defmacro rx
