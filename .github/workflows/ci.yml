@@ -7,7 +7,7 @@ on:
 
 jobs:
   jvm:
-    name: JVM tests (flowdom lib + example full-stack)
+    name: JVM tests (flowdom + flowrpc libs + example full-stack)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +27,9 @@ jobs:
           restore-keys: deps-
       - name: flowdom lib tests
         working-directory: lib/flowdom
+        run: clojure -M:test
+      - name: flowrpc lib tests
+        working-directory: lib/flowrpc
         run: clojure -M:test
       - name: example full-stack JVM tests
         working-directory: example
